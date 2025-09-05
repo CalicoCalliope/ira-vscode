@@ -134,24 +134,6 @@ async function sendPemLog(entry: PemLogEntry): Promise<string> {
   }
 }
 
-function createLLMPanel(title: string, content: string) {
-  const panel = vscode.window.createWebviewPanel(
-    'pemLLM',
-    title,
-    vscode.ViewColumn.Beside,
-    { enableScripts: true }
-  );
-
-  panel.webview.html = `
-    <html>
-      <body>
-        <h2>${title}</h2>
-        <pre>${content}</pre>
-      </body>
-    </html>
-  `;
-}
-
 function getHraWebviewHtml(state: WebviewState) {
   const { stage, isFirstOccurrence, hint, reasoning, answer, context, initialMessage } = state;
 
@@ -333,6 +315,11 @@ export function activate(context: vscode.ExtensionContext) {
 
     const filePath = editor.document.uri.fsPath;
     const language = editor.document.languageId;
+
+    // Run in VS Code integrated terminal (normal user-facing behavior)
+    const terminal = vscode.window.createTerminal('IRA Python');
+    terminal.sendText(`python "${filePath}"`);
+    terminal.show();
 
     runCodeWithIra(filePath, language);
   });
