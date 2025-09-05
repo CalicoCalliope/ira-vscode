@@ -25,7 +25,7 @@ IRA challenges this norm by treating PEMs as learning opportunities, not just te
 ## 🛠️ Tech Stack
 
 - **Frontend:** Visual Studio Code (VSCode WebView API)  
-- **Backend:** Hugging Face API for LLM-based PEM explanation  
+- **Backend:** Hugging Face API for LLM-based PEM explanation, MongoDB and Milvus for database services.
 - **Logging & Adaptation:** Custom user model to adapt explanation depth and guidance  
 - **Languages:** Python, TypeScript
 
