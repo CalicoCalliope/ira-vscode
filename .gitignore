@@ -1,0 +1,48 @@
+# Python
+__pycache__/
+*.py[cod]
+*.so
+.venv/
+.venv*/
+.ira/
+.ira/.venv/
+.pytest_cache/
+.mypy_cache/
+.coverage
+.coverage.*
+htmlcov/
+*.egg-info/
+build/
+dist/
+
+# Node
+node_modules/
+npm-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+dist/
+
+# Editors and OS
+.vscode/
+.idea/
+.DS_Store
+
+# Monorepo service artifacts
+services/*/.venv/
+services/*/dist/
+services/*/__pycache__/
+services/*/.pytest_cache/
+services/*/node_modules/
+services/*/.env
+
+# Vendor caches only (keep source)
+google-research/cubert/**/__pycache__/
+google-research/cubert/**/*.py[co]
+
+# Local backups and temp
+*.bak.*
+*.backup.*
+pytest.ini.bak.*
+venv-backup-*.tar.gz
+backups/
+tmp/
