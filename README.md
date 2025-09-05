@@ -85,9 +85,4 @@ See: [`/docs/schedule.pdf`](./docs/schedule.pdf)
 
 ### 📂 Repo Structure
 
-- /client/        → VSCode frontend interface
-- /server/        → LLM prompt handlers and scaffolding engine
-- /data/          → PEM dataset and learning log stubs
-- /docs/          → Research context, references, and architecture diagrams
-- /tests/         → Evaluation tools and data collection scripts
-“n##
+- TBA
