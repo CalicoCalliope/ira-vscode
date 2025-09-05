@@ -1,0 +1,72 @@
+{
+  "name": "ira",
+  "displayName": "IRA",
+  "description": "A learning-centric IDE plugin designed to empower novice programmers in reading and understanding programming error messages (PEMs) with confidence and autonomy.",
+  "version": "0.0.1",
+  "engines": {
+    "vscode": "^1.102.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "onLanguage:python"
+  ],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "IRA.runPythonAndCaptureErrors",
+        "title": "Run Python and Log Runtime Errors"
+      }
+    ],
+    "configuration": {
+      "type": "object",
+      "title": "IRA",
+      "properties": {
+        "ira.coordinatorEndpoint": {
+          "type": "string",
+          "default": "http://localhost:5000",
+          "description": "Base URL of the coordinator service, TEMPORARY FOR LOCAL DEV RN."
+        },
+        "ira.apiKey": {
+          "type": "string",
+          "default": "",
+          "description": "API key for coordinator authentication (replace with VM URL when deployed)."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run package",
+    "compile": "npm run check-types && npm run lint && node esbuild.js",
+    "watch": "npm-run-all -p watch:*",
+    "watch:esbuild": "node esbuild.js --watch",
+    "watch:tsc": "tsc --noEmit --watch --project tsconfig.json",
+    "package": "npm run check-types && npm run lint && node esbuild.js --production",
+    "compile-tests": "tsc -p . --outDir out",
+    "watch-tests": "tsc -p . -w --outDir out",
+    "pretest": "npm run compile-tests && npm run compile && npm run lint",
+    "check-types": "tsc --noEmit",
+    "lint": "eslint src",
+    "test": "vscode-test"
+  },
+  "devDependencies": {
+    "@types/mocha": "^10.0.10",
+    "@types/node": "20.x",
+    "@types/vscode": "^1.103.0",
+    "@typescript-eslint/eslint-plugin": "^8.31.1",
+    "@typescript-eslint/parser": "^8.31.1",
+    "@vscode/test-cli": "^0.0.11",
+    "@vscode/test-electron": "^2.5.2",
+    "esbuild": "^0.25.3",
+    "eslint": "^9.25.1",
+    "npm-run-all": "^4.1.5",
+    "typescript": "^5.8.3"
+  },
+  "dependencies": {
+    "@xenova/transformers": "^2.17.2",
+    "axios": "^1.10.0",
+    "dotenv": "^17.2.0"
+  }
+}
