@@ -1,36 +1,3 @@
-// import * as vscode from 'vscode';
-// import axios from 'axios';
-// import { PemLogEntry } from './types';
-
-// /**
-//  * Sends a full PemLogEntry to the coordinator backend.
-//  */
-// export async function logPemToCoordinator(entry: PemLogEntry) {
-//   const config = vscode.workspace.getConfiguration('ira');
-//   const endpoint: string = config.get('coordinatorEndpoint', 'http://localhost:5000');
-//   const apiKey: string = config.get('apiKey', '');
-
-//   try {
-//     const response = await axios.post(
-//       `${endpoint}/log-error`,
-//       entry,
-//       {
-//         headers: apiKey ? { Authorization: `Bearer ${apiKey}` } : {},
-//         timeout: 8000,
-//       }
-//     );
-
-//     console.log('[IRA] Logged PEM successfully:', response.data);
-//     return response.data;
-
-//   } catch (err: any) {
-//     const msg = err.response?.data?.message || err.message || 'Unknown error';
-//     vscode.window.showErrorMessage(`[IRA] Failed to log PEM: ${msg}`);
-//     console.error('[IRA] Coordinator request failed:', err);
-//     return null;
-//   }
-// }
-
 import axios, { AxiosError } from 'axios';
 import * as vscode from 'vscode';
 
@@ -55,19 +22,33 @@ function getConfig() {
 
 function headers(apiKey?: string) {
   const h: Record<string, string> = { 'Content-Type': 'application/json' };
-  if (apiKey) h['Authorization'] = `Bearer ${apiKey}`;
+  if (apiKey) { h['Authorization'] = `Bearer ${apiKey}`; }
   return h;
 }
 
 function toFixText(answerAny: any): string | undefined {
-  if (!answerAny) return undefined;
-  if (typeof answerAny === 'string') return answerAny;
-  if (typeof answerAny !== 'object') return undefined;
+  if (!answerAny) {
+    return undefined;
+  }
+  if (typeof answerAny === 'string') {
+    return answerAny;
+  }
+  if (typeof answerAny !== 'object') {
+    return undefined;
+  }
   const parts: string[] = [];
-  if (answerAny.fix_explanation) parts.push(`Why: ${answerAny.fix_explanation}`);
-  if (answerAny.patched_code) parts.push(`Patched code:\n${answerAny.patched_code}`);
-  if (answerAny.diff_unified) parts.push(`Patch (diff):\n${answerAny.diff_unified}`);
-  if (typeof answerAny.confidence === 'number') parts.push(`Confidence: ${(answerAny.confidence * 100).toFixed(0)}%`);
+  if (answerAny.fix_explanation) {
+    parts.push(`Why: ${answerAny.fix_explanation}`);
+  }
+  if (answerAny.patched_code) {
+    parts.push(`Patched code:\n${answerAny.patched_code}`);
+  }
+  if (answerAny.diff_unified) {
+    parts.push(`Patch (diff):\n${answerAny.diff_unified}`);
+  }
+  if (typeof answerAny.confidence === 'number') {
+    parts.push(`Confidence: ${(answerAny.confidence * 100).toFixed(0)}%`);
+  }
   return parts.join('\n\n');
 }
 
