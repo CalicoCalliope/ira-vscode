@@ -46,3 +46,5 @@ pytest.ini.bak.*
 venv-backup-*.tar.gz
 backups/
 tmp/
+ira/*.vsix
+ira/dist/

@@ -1,71 +1,35 @@
-# ira README
+# IRA – VS Code Extension
 
-This is the README for your extension "ira". After writing up a brief description, we recommend including the following sections.
+A learning centric VS Code extension that helps novices read and understand Programming Error Messages (PEMs). It captures runtime errors, attaches lightweight context, and sends them to the IRA backend for guidance and analysis.
 
-## Features
+## Install for the class
+1. Download the `.vsix` file provided by the instructors.
+2. In VS Code open the Extensions panel, click the three dots, choose **Install from VSIX…**, and select the file.
+3. Open **Settings** and search **IRA**.
+   - **IRA: Coordinator Endpoint** set to your class backend URL, for example `https://<your-vm-domain-or-ip>`.
+   - **IRA: Api Key** leave empty unless your instructor provides one.
+4. Restart VS Code.
 
-Describe specific features of your extension including screenshots of your extension in action. Image paths are relative to this README file.
+## Usage
+- Open a Python file.
+- Run the command **IRA: Run Python and Log Runtime Errors** from the Command Palette.
+- When the program throws an error, the extension logs the PEM and sends it to the coordinator endpoint you configured.
 
-For example if there is an image subfolder under your extension project workspace:
-
-\!\[feature X\]\(images/feature-x.png\)
-
-> Tip: Many popular extensions utilize animations. This is an excellent way to show off your extension! We recommend short, focused animations that are easy to follow.
+## Settings
+- `ira.coordinatorEndpoint` string. Base URL of the IRA coordinator service.
+- `ira.apiKey` string. Optional API key for the coordinator.
 
 ## Requirements
+- VS Code 1.103.0 or newer.
+- Python configured in your workspace so your file can run.
 
-If you have any requirements or dependencies, add a section describing those and how to install and configure them.
+## Known limitations
+- This class build focuses on Python error collection.
+- Network access to the coordinator must be available from the student device.
 
-## Extension Settings
+## Release notes
+### 0.1.0-class.1
+- Initial class build. Error capture for Python, configuration for coordinator endpoint, production build with esbuild.
 
-Include if your extension adds any VS Code settings through the `contributes.configuration` extension point.
-
-For example:
-
-This extension contributes the following settings:
-
-* `myExtension.enable`: Enable/disable this extension.
-* `myExtension.thing`: Set to `blah` to do something.
-
-## Known Issues
-
-Calling out known issues can help limit users opening duplicate issues against your extension.
-
-## Release Notes
-
-Users appreciate release notes as you update your extension.
-
-### 1.0.0
-
-Initial release of ...
-
-### 1.0.1
-
-Fixed issue #.
-
-### 1.1.0
-
-Added features X, Y, and Z.
-
----
-
-## Following extension guidelines
-
-Ensure that you've read through the extensions guidelines and follow the best practices for creating your extension.
-
-* [Extension Guidelines](https://code.visualstudio.com/api/references/extension-guidelines)
-
-## Working with Markdown
-
-You can author your README using Visual Studio Code. Here are some useful editor keyboard shortcuts:
-
-* Split the editor (`Cmd+\` on macOS or `Ctrl+\` on Windows and Linux).
-* Toggle preview (`Shift+Cmd+V` on macOS or `Shift+Ctrl+V` on Windows and Linux).
-* Press `Ctrl+Space` (Windows, Linux, macOS) to see a list of Markdown snippets.
-
-## For more information
-
-* [Visual Studio Code's Markdown Support](http://code.visualstudio.com/docs/languages/markdown)
-* [Markdown Syntax Reference](https://help.github.com/articles/markdown-basics/)
-
-**Enjoy!**
+## License
+Copyright © 2025 IRA Team. All rights reserved. For classroom use only.
