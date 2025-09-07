@@ -32,29 +32,76 @@ interface WebviewState {
   isFirstOccurrence: boolean;
   hint?: string;
   reasoning?: string;
-  answer?: string;
+  answer?: string; // content used for "Fix" display
   context?: string;
   initialMessage?: string;
 }
 
 // ---------------------- CONFIG ----------------------
-const COORDINATOR_URL = 'http://YOUR_VM_IP:PORT';
+const COORDINATOR_URL = 'http://YOUR_VM_IP:PORT'; // kept for reference if needed elsewhere
+
+// Friendly intro messages shown before the 3-tier guidance
+const FIRST_TIME_MESSAGES: string[] = [
+  `Don't panic, I'm here. Let's peek at this together 🐣`,
+  `You found an error, not a dead end. We can fix it 🌱`,
+  `New error unlocked! Curious mode on? ✨`,
+  `It's okay to stumble. This is how programmers level up 💪`,
+  `Deep breath. We got this. Want a hint? 😊`,
+  `Errors are just computers asking for clarity. Let's help them 😺`,
+  `You're doing great. Ready for a gentle nudge? 💡`,
+  `No stress. We'll go one tiny step at a time 🧩`
+];
+
+const SEEN_BEFORE_MESSAGES: string[] = [
+  `Hey, we've seen this before. Want a quick refresh? 🔁`,
+  `Welcome back. Familiar error. Shall we try the fast path? 🚀`,
+  `Good news, this one has a known fix. Want the recap? 📘`,
+  `Deja vu! Let's apply what worked last time ✅`,
+  `We recognize this pattern. Want the shortcut summary? 🎯`,
+  `Same vibes as earlier. Want a guided reminder? 🧭`
+];
+
+function friendlyIntro(isFirst: boolean): string {
+  const arr = isFirst ? FIRST_TIME_MESSAGES : SEEN_BEFORE_MESSAGES;
+  return arr[Math.floor(Math.random() * arr.length)];
+}
 
 // ---------------------- HELPER FUNCTIONS ----------------------
-async function getEnvInfo(): Promise<{ pythonVersion?: string; packages?: any[] }> {
-  return new Promise((resolve) => {
-    exec('python --version', (err, stdout) => {
-      const pythonVersion = stdout?.trim();
-      exec('pip list --format=json', (err2, stdout2) => {
-        let packages: any[] = [];
-        try {
-          if (stdout2?.trim()){
-            packages = JSON.parse(stdout2);
-          }
-        } catch {}
-        resolve({ pythonVersion, packages });
+async function resolvePythonCmd(): Promise<string> {
+  const candidates = ['python3', 'python'];
+  for (const cmd of candidates) {
+    try {
+      await new Promise<void>((res, rej) => {
+        exec(`${cmd} --version`, (err) => (err ? rej(err) : res()));
       });
-    });
+      return cmd;
+    } catch {
+      // try next
+    }
+  }
+  vscode.window.showErrorMessage('Python interpreter not found. Please install Python 3 and ensure it is on PATH.');
+  throw new Error('No Python interpreter found on PATH');
+}
+
+async function getEnvInfo(): Promise<{ pythonVersion?: string; packages?: any[] }> {
+  return new Promise(async (resolve) => {
+    try {
+      const py = await resolvePythonCmd();
+      exec(`${py} --version`, (err, stdout, stderr) => {
+        const versionOut = (stdout || stderr || '').toString().trim();
+        exec(`${py} -m pip list --format=json`, (err2, stdout2) => {
+          let packages: any[] = [];
+          try {
+            if (stdout2?.trim()) {
+              packages = JSON.parse(stdout2.toString());
+            }
+          } catch {}
+          resolve({ pythonVersion: versionOut, packages });
+        });
+      });
+    } catch {
+      resolve({ pythonVersion: undefined, packages: [] });
+    }
   });
 }
 
@@ -63,10 +110,11 @@ function extractPemType(errorMessage: string): string {
   return match ? match[1] : 'UnknownError';
 }
 
-function getPemSkeletonFromPython(pem: string): Promise<string> {
+async function getPemSkeletonFromPython(pem: string): Promise<string> {
+  const py = await resolvePythonCmd();
   return new Promise((resolve, reject) => {
     const scriptPath = path.join(__dirname, '..', 'scripts', 'pem_parser.py');
-    const python = spawn('python', [scriptPath]);
+    const python = spawn(py, [scriptPath]);
 
     let output = '';
     let error = '';
@@ -123,6 +171,7 @@ async function buildPemLogEntry(
   };
 }
 
+// Optional direct POST helper if needed elsewhere
 async function sendPemLog(entry: PemLogEntry): Promise<string> {
   try {
     const response = await axios.post(`${COORDINATOR_URL}/process-pem`, entry);
@@ -134,37 +183,47 @@ async function sendPemLog(entry: PemLogEntry): Promise<string> {
   }
 }
 
+// ---------------------- WEBVIEW UI ----------------------
 function getHraWebviewHtml(state: WebviewState) {
   const { stage, isFirstOccurrence, hint, reasoning, answer, context, initialMessage } = state;
 
   let content = '';
   let buttons = '';
 
+  // er to safely embed strings into inline JS
+  const H = (v: any) => JSON.stringify(v ?? '');
+
   switch (stage) {
     case 'initial':
-      content = initialMessage + (context && !isFirstOccurrence ? `<pre>${context}</pre>` : '');
+      content = initialMessage + (context && !isFirstOccurrence ? `<pre class="context">${context}</pre>` : '');
       buttons = `
-        <button onclick="sendMessage('nextStage', { stage: 'hint', isFirstOccurrence: ${isFirstOccurrence}, hint: '${hint}', reasoning: '${reasoning}', answer: '${answer}' })">Yes</button>
-        <button onclick="sendMessage('close')">No</button>
+        <button class="btn primary" onclick='sendMessage("nextStage", { stage: "hint", isFirstOccurrence: ${isFirstOccurrence}, hint: ${H(hint)}, reasoning: ${H(reasoning)}, answer: ${H(answer)} })'>Yes, I am lost. Show me please 😬</button>
+        <button class="btn" onclick='sendMessage("nextStage", { stage: "reasoning", isFirstOccurrence: ${isFirstOccurrence}, hint: ${H(hint)}, reasoning: ${H(reasoning)}, answer: ${H(answer)} })'>Hmmmm. Walk me through step by step 🧭</button>
+        <button class="btn ghost" onclick="sendMessage('close')">I can do this! I do not need help right now 💪</button>
       `;
       break;
     case 'hint':
-      content = `<b>Hint:</b> ${hint}`;
+      content = `<h3>Hint</h3><p>${hint ?? ''}</p>`;
       buttons = `
-        <button onclick="sendMessage('nextStage', { stage: 'reasoning', isFirstOccurrence: ${isFirstOccurrence}, hint: '${hint}', reasoning: '${reasoning}', answer: '${answer}' })">Show More</button>
-        <button onclick="sendMessage('close')">Got It</button>
+        <button class="btn" onclick='sendMessage("nextStage", { stage: "reasoning", isFirstOccurrence: ${isFirstOccurrence}, hint: ${H(hint)}, reasoning: ${H(reasoning)}, answer: ${H(answer)} })'>Give me a bit more 🔎</button>
+        <button class="btn primary" onclick='sendMessage("nextStage", { stage: "answer", isFirstOccurrence: ${isFirstOccurrence}, hint: ${H(hint)}, reasoning: ${H(reasoning)}, answer: ${H(answer)} })'>Actually, show me a fix ✅</button>
+        <button class="btn ghost" onclick="sendMessage('close')">Okay, I got it 👍</button>
       `;
       break;
     case 'reasoning':
-      content = `<b>Reasoning:</b> ${reasoning}`;
+      content = `<h3>Reasoning</h3><p>${reasoning ?? ''}</p>`;
       buttons = `
-        <button onclick="sendMessage('nextStage', { stage: 'answer', isFirstOccurrence: ${isFirstOccurrence}, hint: '${hint}', reasoning: '${reasoning}', answer: '${answer}' })">Show More</button>
-        <button onclick="sendMessage('close')">Got It</button>
+        <button class="btn primary" onclick='sendMessage("nextStage", { stage: "answer", isFirstOccurrence: ${isFirstOccurrence}, hint: ${H(hint)}, reasoning: ${H(reasoning)}, answer: ${H(answer)} })'>Show me a fix ✅</button>
+        <button class="btn" onclick='sendMessage("nextStage", { stage: "hint", isFirstOccurrence: ${isFirstOccurrence}, hint: ${H(hint)}, reasoning: ${H(reasoning)}, answer: ${H(answer)} })'>Back to the hint 🔙</button>
+        <button class="btn ghost" onclick="sendMessage('close')">I want to try this myself ✨</button>
       `;
       break;
     case 'answer':
-      content = `<b>Answer:</b> ${answer}`;
-      buttons = `<button onclick="sendMessage('close')">Got It</button>`;
+      content = `<h3>Fix</h3><p>${answer ?? ''}</p>`;
+      buttons = `
+        <button class="btn ghost" onclick="sendMessage('close')">Got it 👍</button>
+        <button class="btn" onclick='sendMessage("nextStage", { stage: "reasoning", isFirstOccurrence: ${isFirstOccurrence}, hint: ${H(hint)}, reasoning: ${H(reasoning)}, answer: ${H(answer)} })'>Explain how it works 🧠</button>
+      `;
       break;
   }
 
@@ -173,23 +232,94 @@ function getHraWebviewHtml(state: WebviewState) {
     <html lang="en">
     <head>
       <meta charset="UTF-8">
+      <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src https: data:; style-src 'unsafe-inline'; script-src 'unsafe-inline';">
+      <meta name="viewport" content="width=device-width, initial-scale=1" />
       <title>HRA Panel</title>
+      <style>
+        :root {
+          --fg: var(--vscode-foreground);
+          --bg: var(--vscode-editor-background);
+          --panel: var(--vscode-sideBar-background);
+          --border: var(--vscode-panel-border);
+          --btn-fg: var(--vscode-button-foreground);
+          --btn-bg: var(--vscode-button-background);
+          --btn-hover: var(--vscode-button-hoverBackground);
+          --btn-border: var(--vscode-contrastActiveBorder, var(--vscode-button-background));
+          --btn-secondary-bg: var(--vscode-button-secondaryBackground, #2a2e3a);
+          --btn-secondary-fg: var(--vscode-button-secondaryForeground, var(--vscode-foreground));
+          --input-bg: var(--vscode-input-background);
+        }
+        * { box-sizing: border-box; }
+        body { margin: 0; padding: 16px; background: var(--bg); color: var(--fg); font: 13px/1.45 -apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Helvetica,Arial; }
+        .card {
+          background: var(--panel);
+          border: 1px solid var(--border);
+          border-radius: 10px;
+          padding: 16px;
+          box-shadow: 0 6px 18px rgba(0,0,0,.2);
+        }
+        h3 { margin: 0 0 8px; font-size: 14px; }
+        p { margin: 0; white-space: pre-wrap; }
+        .context {
+          background: var(--input-bg);
+          border: 1px solid var(--border);
+          padding: 10px;
+          border-radius: 8px;
+          overflow: auto;
+          max-height: 220px;
+          margin-top: 8px;
+        }
+        .actions { margin-top: 14px; display: flex; flex-wrap: wrap; gap: 8px; }
+        .btn {
+          appearance: none;
+          border: 1px solid var(--btn-border);
+          background: var(--btn-secondary-bg);
+          color: var(--btn-secondary-fg);
+          padding: 8px 12px;
+          border-radius: 8px;
+          cursor: pointer;
+          user-select: none;
+          transition: filter .12s ease, background .12s ease, transform .02s ease-in-out;
+        }
+        .btn:hover { filter: brightness(1.08); }
+        .btn:active { transform: translateY(1px); }
+        .btn.primary {
+          background: var(--btn-bg);
+          color: var(--btn-fg);
+          border-color: var(--btn-bg);
+        }
+        .btn.ghost {
+          background: transparent;
+          color: var(--fg);
+          border-color: var(--border);
+        }
+      </style>
     </head>
     <body>
-      <div>${content}</div>
-      <div style="margin-top: 15px;">${buttons}</div>
-
+      <div class="card">
+        <div class="content">${content}</div>
+        <div class="actions">${buttons}</div>
+      </div>
       <script>
         const vscode = acquireVsCodeApi();
         function sendMessage(command, data = {}) {
           vscode.postMessage({ command, data });
         }
+        // Keyboard shortcuts: Enter activates first primary button, Esc closes
+        document.addEventListener('keydown', (e) => {
+          if (e.key === 'Escape') sendMessage('close');
+          if (e.key === 'Enter') {
+            const primary = document.querySelector('.btn.primary');
+            if (primary) primary.click();
+          }
+        });
       </script>
     </body>
     </html>
   `;
 }
 
+// ---------------------- WEBVIEW CREATION ----------------------
 export function createHraWebview(
   title: string,
   isFirstOccurrence: boolean,
@@ -207,9 +337,7 @@ export function createHraWebview(
     }
   );
 
-  const initialMessage = isFirstOccurrence
-    ? 'Need any help with the error?'
-    : 'Hey, we have seen this before! Here is what happened:';
+  const initialMessage = friendlyIntro(isFirstOccurrence);
 
   panel.webview.html = getHraWebviewHtml({
     stage: 'initial',
@@ -252,9 +380,11 @@ export async function runCodeWithIra(filePath: string, language: string) {
     return;
   }
 
+  const py = await resolvePythonCmd();
+
   const code = editor.document.getText();
 
-  exec(`python "${filePath}"`, async (error, stdout, stderr) => {
+  exec(`${py} "${filePath}"`, async (error, stdout, stderr) => {
     if (stdout){
       console.log(`[stdout]: ${stdout}`);
     }
@@ -290,7 +420,7 @@ export async function runCodeWithIra(filePath: string, language: string) {
       // { isFirstOccurrence, hint, reasoning, answer, context? }
 
       createHraWebview(
-        'PEM Assistant',
+        'IRA Guidance',
         coordinatorResponse.isFirstOccurrence,
         coordinatorResponse.hint,
         coordinatorResponse.reasoning,
@@ -306,19 +436,21 @@ export async function runCodeWithIra(filePath: string, language: string) {
 // ---------------------- EXTENSION ACTIVATION ----------------------
 export function activate(context: vscode.ExtensionContext) {
   // Register the "Run with Ira" command
-  const runAndCaptureErrors = vscode.commands.registerCommand('ira.runWithIra', async () => {
+  const runAndCaptureErrors = vscode.commands.registerCommand('IRA.runPythonAndCaptureErrors', async () => {
     const editor = vscode.window.activeTextEditor;
     if (!editor || editor.document.languageId !== 'python') {
       vscode.window.showErrorMessage('Open a Python file to run.');
       return;
     }
 
+    const py = await resolvePythonCmd();
+
     const filePath = editor.document.uri.fsPath;
     const language = editor.document.languageId;
 
     // Run in VS Code integrated terminal (normal user-facing behavior)
     const terminal = vscode.window.createTerminal('IRA Python');
-    terminal.sendText(`python "${filePath}"`);
+    terminal.sendText(`${py} "${filePath}"`);
     terminal.show();
 
     runCodeWithIra(filePath, language);
@@ -328,9 +460,10 @@ export function activate(context: vscode.ExtensionContext) {
 
   // Create a status bar button (bottom-left) for "Run with Ira"
   const runButton = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 100);
-  runButton.command = 'ira.runWithIra'; // must match the command registered above
-  runButton.text = '▶ Run with Ira';
-  runButton.tooltip = 'Run current Python file and capture runtime errors';
+  runButton.command = 'IRA.runPythonAndCaptureErrors'; // must match the command registered above
+  runButton.text = '$(flag) Run with IRA'; // codicon flag to mimic Scratch's green flag
+  runButton.color = '#16a34a'; // green flag vibe
+  runButton.tooltip = 'Green flag: run current Python file and capture runtime errors';
   runButton.show();
 
   context.subscriptions.push(runButton);
