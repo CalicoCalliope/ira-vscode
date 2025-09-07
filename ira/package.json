@@ -4,6 +4,7 @@
   "description": "A learning-centric IDE plugin designed to empower novice programmers in reading and understanding programming error messages (PEMs) with confidence and autonomy.",
   "publisher": "ira-team",
   "version": "0.1.0-class.1",
+  "icon": "media/robot.svg",
   "repository": {
     "type": "git",
     "url": "https://github.com/CalicoCalliope/ira-vscode.git",
@@ -14,10 +15,18 @@
     "url": "https://github.com/CalicoCalliope/ira-vscode/issues"
   },
   "engines": {
-    "vscode": "^1.103.0"
+    "vscode": "^1.93.0"
   },
   "categories": [
     "Other"
+  ],
+  "keywords": [
+    "education",
+    "python",
+    "errors",
+    "learning",
+    "novice",
+    "ira"
   ],
   "activationEvents": [
     "onLanguage:python",
@@ -66,7 +75,7 @@
     "@types/mocha": "^10.0.10",
     "@types/node": "20.x",
     "@types/uuid": "^8.3.4",
-    "@types/vscode": "^1.103.0",
+    "@types/vscode": "^1.93.0",
     "@typescript-eslint/eslint-plugin": "^8.31.1",
     "@typescript-eslint/parser": "^8.31.1",
     "@vscode/test-cli": "^0.0.11",
