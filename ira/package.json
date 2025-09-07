@@ -6,12 +6,12 @@
   "version": "0.1.0-class.1",
   "repository": {
     "type": "git",
-    "url": "https://github.com/YarenDurgun/IRA-extension.git",
+    "url": "https://github.com/CalicoCalliope/ira-vscode.git",
     "directory": "ira"
   },
-  "homepage": "https://github.com/YarenDurgun/IRA-extension#readme",
+  "homepage": "https://github.com/CalicoCalliope/ira-vscode#readme",
   "bugs": {
-    "url": "https://github.com/YarenDurgun/IRA-extension/issues"
+    "url": "https://github.com/CalicoCalliope/ira-vscode/issues"
   },
   "engines": {
     "vscode": "^1.103.0"
