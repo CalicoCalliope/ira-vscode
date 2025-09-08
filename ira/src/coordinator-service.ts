@@ -80,10 +80,12 @@ export async function logPemToCoordinator(entry: any): Promise<CoordinatorRespon
   const { base, apiKey } = getConfig();
   const opts = { headers: headers(apiKey), timeout: 20000 };
 
+    // Put the real endpoint first, keep legacy fallbacks just in case
   const candidates = [
-    '/v1/pems',        // preferred
-    '/process-pem',    // legacy
-    '/pems'            // very old
+    '/api/pems/process-pem', // current coordinator
+    '/v1/pems',              // older draft
+    '/process-pem',          // legacy
+    '/pems'                  // very old
   ];
 
   let lastErr: any = null;
