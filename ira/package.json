@@ -48,6 +48,16 @@
           "default": "http://localhost:5000",
           "description": "Base URL of the coordinator service, TEMPORARY FOR LOCAL DEV RN."
         },
+        "ira.directLlmEndpoint": {
+          "type": "string",
+          "default": "",
+          "description": "If set, the extension will POST PEM data directly to this LLM endpoint and bypass the coordinator. Use a full URL (e.g., http://localhost:8000/generate-hra)."
+        },
+        "ira.directLlmApiKey": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "Optional bearer token for the direct LLM endpoint."
+        },
         "ira.apiKey": {
           "type": "string",
           "default": "",
