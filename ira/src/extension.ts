@@ -190,39 +190,60 @@ function getHraWebviewHtml(state: WebviewState) {
   let content = '';
   let buttons = '';
 
-  // er to safely embed strings into inline JS
-  const H = (v: any) => JSON.stringify(v ?? '');
+  console.log('Coordinator raw response:', answer);
 
+  // Escape HTML for safe display in body
+  const escapeHtml = (str: string | undefined) =>
+    (str ?? '')
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;")
+      .replace(/'/g, "&#39;")
+      .replace(/\n/g, "<br>");
+
+  // Helper to generate buttons safely
+  const createButton = (label: string, payloadObj?: any, type: "primary" | "ghost" | "default" = "default") => {
+    const payload = payloadObj ? JSON.stringify(payloadObj).replace(/'/g, "&apos;") : "";
+    const cls = type === "primary" ? "btn primary" : type === "ghost" ? "btn ghost" : "btn";
+    if (payloadObj) {
+      return `<button class="${cls}" data-payload='${payload}' onclick='sendMessageFromButton(this)'>${label}</button>`;
+    } else {
+      return `<button class="${cls}" onclick='sendMessage("close")'>${label}</button>`;
+    }
+  };
+
+  // Generate content and buttons per stage
   switch (stage) {
     case 'initial':
-      content = initialMessage + (context && !isFirstOccurrence ? `<pre class="context">${context}</pre>` : '');
+      content = escapeHtml(initialMessage) + (context && !isFirstOccurrence ? `<pre class="context">${escapeHtml(context)}</pre>` : '');
       buttons = `
-        <button class="btn primary" onclick='sendMessage("nextStage", { stage: "hint", isFirstOccurrence: ${isFirstOccurrence}, hint: ${H(hint)}, reasoning: ${H(reasoning)}, answer: ${H(answer)} })'>Yes, I am lost. Show me please 😬</button>
-        <button class="btn" onclick='sendMessage("nextStage", { stage: "reasoning", isFirstOccurrence: ${isFirstOccurrence}, hint: ${H(hint)}, reasoning: ${H(reasoning)}, answer: ${H(answer)} })'>Hmmmm. Walk me through step by step 🧭</button>
-        <button class="btn ghost" onclick="sendMessage('close')">I can do this! I do not need help right now 💪</button>
+        ${createButton("Yes, I am lost. Show me please 😬", { stage: "hint", isFirstOccurrence, hint, reasoning, answer }, "primary")}
+        ${createButton("Hmmmm. Walk me through step by step 🧭", { stage: "reasoning", isFirstOccurrence, hint, reasoning, answer })}
+        ${createButton("I can do this! I do not need help right now 💪")}
       `;
       break;
     case 'hint':
-      content = `<h3>Hint</h3><p>${hint ?? ''}</p>`;
+      content = `<h3>Hint</h3><p>${escapeHtml(hint)}</p>`;
       buttons = `
-        <button class="btn" onclick='sendMessage("nextStage", { stage: "reasoning", isFirstOccurrence: ${isFirstOccurrence}, hint: ${H(hint)}, reasoning: ${H(reasoning)}, answer: ${H(answer)} })'>Give me a bit more 🔎</button>
-        <button class="btn primary" onclick='sendMessage("nextStage", { stage: "answer", isFirstOccurrence: ${isFirstOccurrence}, hint: ${H(hint)}, reasoning: ${H(reasoning)}, answer: ${H(answer)} })'>Actually, show me a fix ✅</button>
-        <button class="btn ghost" onclick="sendMessage('close')">Okay, I got it 👍</button>
+        ${createButton("Give me a bit more 🔎", { stage: "reasoning", isFirstOccurrence, hint, reasoning, answer })}
+        ${createButton("Actually, show me a fix ✅", { stage: "answer", isFirstOccurrence, hint, reasoning, answer }, "primary")}
+        ${createButton("Okay, I got it 👍")}
       `;
       break;
     case 'reasoning':
-      content = `<h3>Reasoning</h3><p>${reasoning ?? ''}</p>`;
+      content = `<h3>Reasoning</h3><p>${escapeHtml(reasoning)}</p>`;
       buttons = `
-        <button class="btn primary" onclick='sendMessage("nextStage", { stage: "answer", isFirstOccurrence: ${isFirstOccurrence}, hint: ${H(hint)}, reasoning: ${H(reasoning)}, answer: ${H(answer)} })'>Show me a fix ✅</button>
-        <button class="btn" onclick='sendMessage("nextStage", { stage: "hint", isFirstOccurrence: ${isFirstOccurrence}, hint: ${H(hint)}, reasoning: ${H(reasoning)}, answer: ${H(answer)} })'>Back to the hint 🔙</button>
-        <button class="btn ghost" onclick="sendMessage('close')">I want to try this myself ✨</button>
+        ${createButton("Show me a fix ✅", { stage: "answer", isFirstOccurrence, hint, reasoning, answer }, "primary")}
+        ${createButton("Back to the hint 🔙", { stage: "hint", isFirstOccurrence, hint, reasoning, answer })}
+        ${createButton("I want to try this myself ✨")}
       `;
       break;
     case 'answer':
-      content = `<h3>Fix</h3><p>${answer ?? ''}</p>`;
+      content = `<h3>Fix</h3><p>${escapeHtml(answer)}</p>`;
       buttons = `
-        <button class="btn ghost" onclick="sendMessage('close')">Got it 👍</button>
-        <button class="btn" onclick='sendMessage("nextStage", { stage: "reasoning", isFirstOccurrence: ${isFirstOccurrence}, hint: ${H(hint)}, reasoning: ${H(reasoning)}, answer: ${H(answer)} })'>Explain how it works 🧠</button>
+        ${createButton("Got it 👍")}
+        ${createButton("Explain how it works 🧠", { stage: "reasoning", isFirstOccurrence, hint, reasoning, answer })}
       `;
       break;
   }
@@ -251,48 +272,16 @@ function getHraWebviewHtml(state: WebviewState) {
         }
         * { box-sizing: border-box; }
         body { margin: 0; padding: 16px; background: var(--bg); color: var(--fg); font: 13px/1.45 -apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Helvetica,Arial; }
-        .card {
-          background: var(--panel);
-          border: 1px solid var(--border);
-          border-radius: 10px;
-          padding: 16px;
-          box-shadow: 0 6px 18px rgba(0,0,0,.2);
-        }
+        .card { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 16px; box-shadow: 0 6px 18px rgba(0,0,0,.2); }
         h3 { margin: 0 0 8px; font-size: 14px; }
         p { margin: 0; white-space: pre-wrap; }
-        .context {
-          background: var(--input-bg);
-          border: 1px solid var(--border);
-          padding: 10px;
-          border-radius: 8px;
-          overflow: auto;
-          max-height: 220px;
-          margin-top: 8px;
-        }
+        .context { background: var(--input-bg); border: 1px solid var(--border); padding: 10px; border-radius: 8px; overflow: auto; max-height: 220px; margin-top: 8px; }
         .actions { margin-top: 14px; display: flex; flex-wrap: wrap; gap: 8px; }
-        .btn {
-          appearance: none;
-          border: 1px solid var(--btn-border);
-          background: var(--btn-secondary-bg);
-          color: var(--btn-secondary-fg);
-          padding: 8px 12px;
-          border-radius: 8px;
-          cursor: pointer;
-          user-select: none;
-          transition: filter .12s ease, background .12s ease, transform .02s ease-in-out;
-        }
+        .btn { appearance: none; border: 1px solid var(--btn-border); background: var(--btn-secondary-bg); color: var(--btn-secondary-fg); padding: 8px 12px; border-radius: 8px; cursor: pointer; user-select: none; transition: filter .12s ease, background .12s ease, transform .02s ease-in-out; }
         .btn:hover { filter: brightness(1.08); }
         .btn:active { transform: translateY(1px); }
-        .btn.primary {
-          background: var(--btn-bg);
-          color: var(--btn-fg);
-          border-color: var(--btn-bg);
-        }
-        .btn.ghost {
-          background: transparent;
-          color: var(--fg);
-          border-color: var(--border);
-        }
+        .btn.primary { background: var(--btn-bg); color: var(--btn-fg); border-color: var(--btn-bg); }
+        .btn.ghost { background: transparent; color: var(--fg); border-color: var(--border); }
       </style>
     </head>
     <body>
@@ -302,9 +291,20 @@ function getHraWebviewHtml(state: WebviewState) {
       </div>
       <script>
         const vscode = acquireVsCodeApi();
-        function sendMessage(command, data = {}) {
-          vscode.postMessage({ command, data });
+        function sendMessage(command, data = {}) { vscode.postMessage({ command, data }); }
+
+        // Helper to read payload from button data attribute
+        function sendMessageFromButton(btn) {
+          const payload = btn.getAttribute('data-payload');
+          if (!payload) return;
+          try {
+            const data = JSON.parse(payload);
+            sendMessage("nextStage", data);
+          } catch (err) {
+            console.error("Failed to parse button payload", err);
+          }
         }
+
         // Keyboard shortcuts: Enter activates first primary button, Esc closes
         document.addEventListener('keydown', (e) => {
           if (e.key === 'Escape') sendMessage('close');
