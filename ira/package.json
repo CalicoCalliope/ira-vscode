@@ -3,7 +3,7 @@
   "displayName": "IRA",
   "description": "A learning-centric IDE plugin designed to empower novice programmers in reading and understanding programming error messages (PEMs) with confidence and autonomy.",
   "publisher": "ira-team",
-  "version": "0.0.2",
+  "version": "0.0.3",
   "repository": {
     "type": "git",
     "url": "https://github.com/CalicoCalliope/ira-vscode.git",
