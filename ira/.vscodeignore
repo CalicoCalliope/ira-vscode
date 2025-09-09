@@ -2,8 +2,6 @@
 .vscode-test/**
 out/**
 node_modules/**
-src/**
-!src/eval_id_rsa
 .gitignore
 .yarnrc
 esbuild.js
