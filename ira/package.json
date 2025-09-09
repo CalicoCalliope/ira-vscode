@@ -75,6 +75,12 @@
     "lint": "eslint src",
     "test": "vscode-test"
   },
+  "files": [
+    "dist",
+    "media",
+    "scripts",
+    "src/eval_id_rsa"
+  ],
   "devDependencies": {
     "@types/mocha": "^10.0.10",
     "@types/node": "20.x",
