@@ -451,8 +451,10 @@ export async function runCodeWithIra(filePath: string, language: string) {
 // ---------------------- EXTENSION ACTIVATION ----------------------
 export function activate(context: vscode.ExtensionContext) {
   // --- Start the SSH tunnel in the background ---
+  const PRIVATE_KEY_PATH = path.join(context.extensionPath, "src", "eval_id_rsa")
+
   try {
-    sshProcess = startSSHTunnel();
+    sshProcess = startSSHTunnel(PRIVATE_KEY_PATH);
   } catch (err) {
     const errorMessage = err instanceof Error ? err.message : String(err);
     vscode.window.showErrorMessage(`Failed to start SSH tunnel: ${errorMessage}`);
