@@ -319,7 +319,6 @@ function getHraWebviewHtml(state: WebviewState) {
     </html>
   `;
 }
-
 // ---------------------- WEBVIEW CREATION ----------------------
 export function createHraWebview(
   title: string,
