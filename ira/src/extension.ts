@@ -184,6 +184,12 @@ async function sendPemLog(entry: PemLogEntry): Promise<string> {
 }
 
 // ---------------------- WEBVIEW UI ----------------------
+function getHraWebviewHtml(state: WebviewState) {
+  const { stage, isFirstOccurrence, hint, reasoning, answer, context, initialMessage } = state;
+
+  let content = '';
+  let buttons = '';
+
   console.log('Coordinator raw response:', answer);
 
   // Escape HTML for safe display in body
@@ -242,22 +248,6 @@ async function sendPemLog(entry: PemLogEntry): Promise<string> {
       break;
   }
 
-    
-          
-            
-    
-
-          
-          Expand Down
-          
-            
-    
-
-          
-          Expand Up
-    
-    @@ -251,48 +272,16 @@ function getHraWebviewHtml(state: WebviewState) {
-  
   return `
     <!DOCTYPE html>
     <html lang="en">
@@ -295,17 +285,6 @@ async function sendPemLog(entry: PemLogEntry): Promise<string> {
       </style>
     </head>
     <body>
-
-    
-        
-          
-    
-
-        
-        Expand All
-    
-    @@ -302,9 +291,20 @@ function getHraWebviewHtml(state: WebviewState) {
-  
       <div class="card">
         <div class="content">${content}</div>
         <div class="actions">${buttons}</div>
@@ -313,6 +292,7 @@ async function sendPemLog(entry: PemLogEntry): Promise<string> {
       <script>
         const vscode = acquireVsCodeApi();
         function sendMessage(command, data = {}) { vscode.postMessage({ command, data }); }
+
         // Helper to read payload from button data attribute
         function sendMessageFromButton(btn) {
           const payload = btn.getAttribute('data-payload');
@@ -324,20 +304,10 @@ async function sendPemLog(entry: PemLogEntry): Promise<string> {
             console.error("Failed to parse button payload", err);
           }
         }
+
         // Keyboard shortcuts: Enter activates first primary button, Esc closes
         document.addEventListener('keydown', (e) => {
           if (e.key === 'Escape') sendMessage('close');
-
-    
-          
-            
-    
-
-          
-          Expand Down
-    
-    
-  
           if (e.key === 'Enter') {
             const primary = document.querySelector('.btn.primary');
             if (primary) primary.click();
@@ -348,7 +318,6 @@ async function sendPemLog(entry: PemLogEntry): Promise<string> {
     </html>
   `;
 }
-
 // ---------------------- WEBVIEW CREATION ----------------------
 export function createHraWebview(
   title: string,
