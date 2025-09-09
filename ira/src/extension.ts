@@ -4,8 +4,11 @@ import * as path from 'path';
 import axios from 'axios';
 import { v4 as uuidv4 } from 'uuid';
 import { logPemToCoordinator } from "./coordinator-service";
+import { startSSHTunnel } from './ssh-tunnel';
 
 // ---------------------- TYPES ----------------------
+let sshProcess: ReturnType<typeof startSSHTunnel> | null = null;
+
 export interface PemLogEntry {
   id: string;
   timestamp: string;
@@ -190,8 +193,6 @@ function getHraWebviewHtml(state: WebviewState) {
   let content = '';
   let buttons = '';
 
-  console.log('Coordinator raw response:', answer);
-
   // Escape HTML for safe display in body
   const escapeHtml = (str: string | undefined) =>
     (str ?? '')
@@ -373,6 +374,20 @@ function extractRuntimeError(stderr: string): string | null {
 }
 
 // ---------------------- RUN WITH IRA ----------------------
+function extractPatchedCode(answerStr?: string): string | undefined {
+  if (!answerStr) return undefined;
+
+  // Match "Patched code:" and capture all lines until a line that starts with "Patch" or "Confidence"
+  const match = answerStr.match(/Patched code:\r?\n([\s\S]*?)(?=\r?\n(Patch|Confidence))/);
+
+  if (match && match[1]) {
+    // prepend "Patched code:" to match your desired output
+    return 'Patched code:\n' + match[1].trim();
+  }
+
+  return undefined;
+}
+
 export async function runCodeWithIra(filePath: string, language: string) {
   const editor = vscode.window.activeTextEditor;
   if (!editor){
@@ -414,16 +429,17 @@ export async function runCodeWithIra(filePath: string, language: string) {
 
       // Send to coordinator and get enriched response (HRA + firstOccurrence + context)
       const coordinatorResponse = await logPemToCoordinator(pemLogEntry);
+      const patchedCode = extractPatchedCode(coordinatorResponse.answer) ?? '';
 
       // coordinatorResponse should include:
-      // { isFirstOccurrence, hint, reasoning, answer, context? }
+      // { isFirstOccurrence, hint, reasoning, answer, context? }      
 
       createHraWebview(
         'IRA Guidance',
         coordinatorResponse.isFirstOccurrence,
         coordinatorResponse.hint,
         coordinatorResponse.reasoning,
-        coordinatorResponse.answer,
+        patchedCode,
         coordinatorResponse.context
       );
 
@@ -434,6 +450,14 @@ export async function runCodeWithIra(filePath: string, language: string) {
 
 // ---------------------- EXTENSION ACTIVATION ----------------------
 export function activate(context: vscode.ExtensionContext) {
+  // --- Start the SSH tunnel in the background ---
+  try {
+    sshProcess = startSSHTunnel();
+  } catch (err) {
+    const errorMessage = err instanceof Error ? err.message : String(err);
+    vscode.window.showErrorMessage(`Failed to start SSH tunnel: ${errorMessage}`);
+  }
+
   // Register the "Run with Ira" command
   const runAndCaptureErrors = vscode.commands.registerCommand('IRA.runPythonAndCaptureErrors', async () => {
     const editor = vscode.window.activeTextEditor;
@@ -468,4 +492,8 @@ export function activate(context: vscode.ExtensionContext) {
   context.subscriptions.push(runButton);
 }
 
-export function deactivate() {}
+export function deactivate() {
+    if (sshProcess) {
+      sshProcess.kill(); // terminates the SSH tunnel
+    }
+}
