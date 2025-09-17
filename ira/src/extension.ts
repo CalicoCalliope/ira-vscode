@@ -4,10 +4,8 @@ import * as path from 'path';
 import axios from 'axios';
 import { v4 as uuidv4 } from 'uuid';
 import { logPemToCoordinator } from "./coordinator-service";
-import { startSSHTunnel } from './ssh-tunnel';
 
 // ---------------------- TYPES ----------------------
-let sshProcess: ReturnType<typeof startSSHTunnel> | null = null;
 
 export interface PemLogEntry {
   id: string;
@@ -450,14 +448,6 @@ export async function runCodeWithIra(filePath: string, language: string) {
 
 // ---------------------- EXTENSION ACTIVATION ----------------------
 export function activate(context: vscode.ExtensionContext) {
-  // --- Start the SSH tunnel in the background ---
-  try {
-    sshProcess = startSSHTunnel();
-  } catch (err) {
-    const errorMessage = err instanceof Error ? err.message : String(err);
-    vscode.window.showErrorMessage(`Failed to start SSH tunnel: ${errorMessage}`);
-  }
-
   // Register the "Run with Ira" command
   const runAndCaptureErrors = vscode.commands.registerCommand('IRA.runPythonAndCaptureErrors', async () => {
     const editor = vscode.window.activeTextEditor;
@@ -493,7 +483,4 @@ export function activate(context: vscode.ExtensionContext) {
 }
 
 export function deactivate() {
-    if (sshProcess) {
-      sshProcess.kill(); // terminates the SSH tunnel
-    }
 }
