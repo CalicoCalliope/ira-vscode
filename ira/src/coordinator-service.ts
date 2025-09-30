@@ -12,8 +12,9 @@ export interface CoordinatorResponse {
 
 function getConfig() {
   const cfg = vscode.workspace.getConfiguration('ira');
-  const rawBase = String(cfg.get('coordinatorEndpoint') || '').trim();
-  const base = rawBase.replace(/\/+$/,'');
+  // const rawBase = String(cfg.get('coordinatorEndpoint') || '').trim();
+  // const base = rawBase.replace(/\/+$/,'');$
+  const base = "http://172.23.78.42:80";
   const apiKey = String(cfg.get('apiKey') || '').trim();
   if (!base) {
     throw new Error('IRA: coordinator endpoint is not set. Open Settings and set "IRA: Coordinator Endpoint".');
@@ -82,6 +83,7 @@ export async function logPemToCoordinator(entry: any): Promise<CoordinatorRespon
   const opts = { headers: headers(apiKey), timeout: 20000 };
 
   const candidates = [
+    '/api/pems',
     '/v1/pems',                // preferred JSON API path
     '/process-pem',            // legacy root path
     '/pems',                   // very old root path
