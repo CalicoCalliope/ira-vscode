@@ -6,4 +6,6 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 
 ## [Unreleased]
 
-- Initial release
+## [0.0.8] - 2025-09-30
+
+- Restore configurable coordinator endpoint and add API-prefixed fallback for coordinator compatibility.
