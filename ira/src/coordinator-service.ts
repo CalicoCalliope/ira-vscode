@@ -12,7 +12,8 @@ export interface CoordinatorResponse {
 
 function getConfig() {
   const cfg = vscode.workspace.getConfiguration('ira');
-  const base = String(cfg.get('coordinatorEndpoint') || '').trim().replace(/\/+$/,'');
+  // const base = String(cfg.get('coordinatorEndpoint') || '').trim().replace(/\/+$/,'');
+  const base = "http://172.23.78.42:80/api/pems";
   const apiKey = String(cfg.get('apiKey') || '').trim();
   if (!base) {
     throw new Error('IRA: coordinator endpoint is not set. Open Settings and set "IRA: Coordinator Endpoint".');
