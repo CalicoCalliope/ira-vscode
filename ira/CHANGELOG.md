@@ -6,6 +6,10 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 
 ## [Unreleased]
 
+## [0.0.10] - 2025-09-30
+
+- Update coordinator base to `/api/pems` and rely on legacy fallbacks for compatibility.
+
 ## [0.0.9] - 2025-09-30
 
 - Pin default coordinator host to 172.23.78.42 and probe `/api/pems` path to match backend deployment.
