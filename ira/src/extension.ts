@@ -36,6 +36,8 @@ interface WebviewState {
   answer?: string; // content used for "Fix" display
   context?: string;
   initialMessage?: string;
+  seenHint?: boolean;
+  seenReasoning?: boolean;
 }
 
 // ---------------------- CONFIG ----------------------
@@ -50,7 +52,15 @@ const FIRST_TIME_MESSAGES: string[] = [
   `Deep breath. We got this. Want a hint? 😊`,
   `Errors are just computers asking for clarity. Let's help them 😺`,
   `You're doing great. Ready for a gentle nudge? 💡`,
-  `No stress. We'll go one tiny step at a time 🧩`
+  `No stress. We'll go one tiny step at a time 🧩`,
+  `You spotted something new—let's stay curious and unpack it together 🌱`,
+  `Deep breath; this error is just a clue and we can decode it calmly 🧘`,
+  `New puzzle unlocked! We'll explore it step by step ✨`,
+  `It's okay to feel unsure; I'm here to guide the next move 🤝`,
+  `No rush—let's turn this mysterious message into insight 🧩`,
+  `You’re learning with every attempt; ready for a gentle nudge? 💡`,
+  `We’ve got this—confidence first, syntax second 💪`,
+  `Errors are questions in disguise; let's answer them together 🔍`
 ];
 
 const SEEN_BEFORE_MESSAGES: string[] = [
@@ -59,7 +69,15 @@ const SEEN_BEFORE_MESSAGES: string[] = [
   `Good news, this one has a known fix. Want the recap? 📘`,
   `Deja vu! Let's apply what worked last time ✅`,
   `We recognize this pattern. Want the shortcut summary? 🎯`,
-  `Same vibes as earlier. Want a guided reminder? 🧭`
+  `Same vibes as earlier. Want a guided reminder? 🧭`,
+  `This looks familiar; let’s revisit what worked last time ✅`,
+  `Welcome back, teammate—ready for a calm refresher? 🔁`,
+  `We already mapped this terrain; shall we take the guided trail? 🧭`,
+  `Good news: you've handled this before. Want the friendly recap? 📘`,
+  `Same pattern, same steady approach. Let’s walk through it 🌿`,
+  `Your past effort is paying off—let me highlight the key steps ⭐`,
+  `Already met this bug? Perfect, we can reinforce the lesson together 🧠`,
+  `A quick reminder and you’ll be right back on track 🚶`
 ];
 
 function friendlyIntro(isFirst: boolean): string {
@@ -186,7 +204,20 @@ async function sendPemLog(entry: PemLogEntry): Promise<string> {
 
 // ---------------------- WEBVIEW UI ----------------------
 function getHraWebviewHtml(state: WebviewState) {
-  const { stage, isFirstOccurrence, hint, reasoning, answer, context, initialMessage } = state;
+  const {
+    stage,
+    isFirstOccurrence,
+    hint,
+    reasoning,
+    answer,
+    context,
+    initialMessage,
+    seenHint = false,
+    seenReasoning = false
+  } = state;
+
+  const hasSeenHint = seenHint || stage === 'hint';
+  const hasSeenReasoning = seenReasoning || stage === 'reasoning' || stage === 'answer';
 
   let content = '';
   let buttons = '';
@@ -212,37 +243,55 @@ function getHraWebviewHtml(state: WebviewState) {
     }
   };
 
+  const basePayload = {
+    isFirstOccurrence,
+    hint,
+    reasoning,
+    answer,
+    context,
+    initialMessage,
+    seenHint: hasSeenHint,
+    seenReasoning: hasSeenReasoning
+  };
+
+  const buildPayload = (nextStage: WebviewState['stage'], overrides: Partial<WebviewState> = {}) => ({
+    ...basePayload,
+    ...overrides,
+    stage: nextStage
+  });
+
   // Generate content and buttons per stage
   switch (stage) {
     case 'initial':
       content = escapeHtml(initialMessage) + (context && !isFirstOccurrence ? `<pre class="context">${escapeHtml(context)}</pre>` : '');
       buttons = `
-        ${createButton("Yes, I am lost. Show me please 😬", { stage: "hint", isFirstOccurrence, hint, reasoning, answer }, "primary")}
-        ${createButton("Hmmmm. Walk me through step by step 🧭", { stage: "reasoning", isFirstOccurrence, hint, reasoning, answer })}
+        ${createButton("Yes, I am lost. Show me step-by-step please 😬", buildPayload("hint", { seenHint: true }), "primary")}
+        ${createButton("Hmmmm. Walk me through why this happened 🧭", buildPayload("reasoning", { seenReasoning: true }))}
         ${createButton("I can do this! I do not need help right now 💪")}
       `;
       break;
     case 'hint':
-      content = `<h3>Hint</h3><p>${escapeHtml(hint)}</p>`;
+      content = `<h3>What's happening</h3><p>${escapeHtml(hint)}</p>`;
       buttons = `
-        ${createButton("Give me a bit more 🔎", { stage: "reasoning", isFirstOccurrence, hint, reasoning, answer })}
-        ${createButton("Actually, show me a fix ✅", { stage: "answer", isFirstOccurrence, hint, reasoning, answer }, "primary")}
+        ${createButton("Teach me why this happened 🧠", buildPayload("reasoning", { seenHint: true, seenReasoning: true }), "primary")}
         ${createButton("Okay, I got it 👍")}
       `;
       break;
-    case 'reasoning':
-      content = `<h3>Reasoning</h3><p>${escapeHtml(reasoning)}</p>`;
+    case 'reasoning': {
+      content = `<h3>Why it happens</h3><p>${escapeHtml(reasoning)}</p>`;
+      const fixButton = hasSeenHint ? createButton("Show me how to fix this type of error", buildPayload("answer"), "ghost") : '';
       buttons = `
-        ${createButton("Show me a fix ✅", { stage: "answer", isFirstOccurrence, hint, reasoning, answer }, "primary")}
-        ${createButton("Back to the hint 🔙", { stage: "hint", isFirstOccurrence, hint, reasoning, answer })}
-        ${createButton("I want to try this myself ✨")}
+        ${createButton("Back to \"What's happening\" 🔙", buildPayload("hint", { seenHint: true }))}
+        ${createButton("I'm ready to tackle this myself 💪", undefined, "primary")}
+        ${fixButton}
       `;
       break;
+    }
     case 'answer':
-      content = `<h3>Fix</h3><p>${escapeHtml(answer)}</p>`;
+      content = `<h3>How to fix it</h3><p>${escapeHtml(answer)}</p>`;
       buttons = `
         ${createButton("Got it 👍")}
-        ${createButton("Explain how it works 🧠", { stage: "reasoning", isFirstOccurrence, hint, reasoning, answer })}
+        ${createButton("Explain how it works 🧠", buildPayload("reasoning", { seenHint: true, seenReasoning: true }))}
       `;
       break;
   }
@@ -264,10 +313,12 @@ function getHraWebviewHtml(state: WebviewState) {
           --btn-fg: var(--vscode-button-foreground);
           --btn-bg: var(--vscode-button-background);
           --btn-hover: var(--vscode-button-hoverBackground);
-          --btn-border: var(--vscode-contrastActiveBorder, var(--vscode-button-background));
+          --btn-border: #16a34a;
           --btn-secondary-bg: var(--vscode-button-secondaryBackground, #2a2e3a);
           --btn-secondary-fg: var(--vscode-button-secondaryForeground, var(--vscode-foreground));
           --input-bg: var(--vscode-input-background);
+          --btn-primary-bg: #16a34a;
+          --btn-primary-hover: #15803d;
         }
         * { box-sizing: border-box; }
         body { margin: 0; padding: 16px; background: var(--bg); color: var(--fg); font: 13px/1.45 -apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Helvetica,Arial; }
@@ -279,7 +330,8 @@ function getHraWebviewHtml(state: WebviewState) {
         .btn { appearance: none; border: 1px solid var(--btn-border); background: var(--btn-secondary-bg); color: var(--btn-secondary-fg); padding: 8px 12px; border-radius: 8px; cursor: pointer; user-select: none; transition: filter .12s ease, background .12s ease, transform .02s ease-in-out; }
         .btn:hover { filter: brightness(1.08); }
         .btn:active { transform: translateY(1px); }
-        .btn.primary { background: var(--btn-bg); color: var(--btn-fg); border-color: var(--btn-bg); }
+        .btn.primary { background: var(--btn-primary-bg); color: var(--btn-fg); border-color: var(--btn-primary-bg); }
+        .btn.primary:hover { background: var(--btn-primary-hover); filter: none; }
         .btn.ghost { background: transparent; color: var(--fg); border-color: var(--border); }
       </style>
     </head>
