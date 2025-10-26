@@ -3,7 +3,7 @@ import { exec, spawn } from 'child_process';
 import * as path from 'path';
 import axios from 'axios';
 import { v4 as uuidv4 } from 'uuid';
-import { logPemToCoordinator } from "./coordinator-service";
+import { logPemToCoordinator, updateAccessed } from "./coordinator-service";
 
 // ---------------------- TYPES ----------------------
 
@@ -335,11 +335,19 @@ function getHraWebviewHtml(state: WebviewState) {
         .btn.ghost { background: transparent; color: var(--fg); border-color: var(--border); }
       </style>
     </head>
+
+    <p style="color: lime;">✅ Webview HTML loaded</p>
+      <script>
+        console.log("[Webview] Script starting...");
+        document.body.insertAdjacentHTML('beforeend', '<p style="color: yellow;">✅ Webview script executed</p>');
+      </script>
+
     <body>
       <div class="card">
         <div class="content">${content}</div>
         <div class="actions">${buttons}</div>
       </div>
+
       <script>
         const vscode = acquireVsCodeApi();
         function sendMessage(command, data = {}) { vscode.postMessage({ command, data }); }
@@ -350,11 +358,20 @@ function getHraWebviewHtml(state: WebviewState) {
           if (!payload) return;
           try {
             const data = JSON.parse(payload);
+            console.log("[Webview] Button clicked, sending nextStage:", data);
             sendMessage("nextStage", data);
           } catch (err) {
             console.error("Failed to parse button payload", err);
           }
         }
+
+        window.addEventListener('message', event => {
+          const msg = event.data;
+          if (msg.command === 'updateStage') {
+            console.log("[Webview] Updating stage:", msg.data.stage);
+            document.querySelector('.content').innerHTML = "<h3>\${msg.data.stage}</h3>";
+          }
+        });
 
         // Keyboard shortcuts: Enter activates first primary button, Esc closes
         document.addEventListener('keydown', (e) => {
@@ -376,7 +393,8 @@ export function createHraWebview(
   hint?: string,
   reasoning?: string,
   answer?: string,
-  context?: string
+  context?: string,
+  pemId?: string
 ) {
   const panel = vscode.window.createWebviewPanel(
     'hraPanel',
@@ -399,15 +417,44 @@ export function createHraWebview(
     initialMessage
   });
 
+  let currentState: WebviewState = {
+    stage: 'initial',
+    isFirstOccurrence,
+    hint,
+    reasoning,
+    answer,
+    context,
+    initialMessage,
+    seenHint: false,
+    seenReasoning: false,
+  };
+
   // Handle messages from the Webview
   panel.webview.onDidReceiveMessage(
-    message => {
+    async message => {
+      console.log("[IRA] Message received from Webview:", message);
       switch (message.command) {
-        case 'nextStage':
-          panel.webview.html = getHraWebviewHtml({
-            ...message.data
+        case 'nextStage': {
+          console.log("[IRA] nextStage triggered:", message.data.stage);
+
+          currentState = { ...currentState, ...message.data };
+          
+          panel.webview.postMessage({
+            command: 'updateStage',
+            data: currentState
           });
+
+          const stage = message.data.stage;
+          try {
+            if (stage === 'hint') await updateAccessed(pemId!, { hint: true });
+            if (stage === 'reasoning') await updateAccessed(pemId!, { reasoning: true });
+            if (stage === 'answer') await updateAccessed(pemId!, { answer: true });
+          } catch (err) {
+            console.warn("Failed to update accessed:", err);
+          }
           break;
+        }
+
         case 'close':
           panel.dispose();
           break;
@@ -415,6 +462,13 @@ export function createHraWebview(
     },
     undefined
   );
+
+  panel.webview.onDidReceiveMessage(async message => {
+    if (message.command === 'updateStage') {
+      console.log("[IRA] updateStage message received on extension side (should not happen)");
+    }
+  });
+
 }
 
 // ---------------------- RUNTIME ERROR HANDLING ----------------------
@@ -490,7 +544,8 @@ export async function runCodeWithIra(filePath: string, language: string) {
         coordinatorResponse.hint,
         coordinatorResponse.reasoning,
         patchedCode,
-        coordinatorResponse.context
+        coordinatorResponse.context,
+        pemLogEntry.id
       );
 
       vscode.window.showErrorMessage(`Runtime error (${pemType}) occurred. HRA panel opened.`);

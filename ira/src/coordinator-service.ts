@@ -119,3 +119,33 @@ export async function logPemToCoordinator(entry: any): Promise<CoordinatorRespon
     context: undefined,
   };
 }
+
+/**
+ * Mark parts of the HRA that the user has accessed (hint, reasoning, answer)
+ */
+export async function updateAccessed(pemId: string, accessed: { hint?: boolean; reasoning?: boolean; answer?: boolean }) {
+  if (!pemId) return;
+  const { base, apiKey } = getConfig();
+  const opts = { headers: headers(apiKey), timeout: 10000 };
+
+  const candidates = [
+    `/v1/pems/accessed/${pemId}`,
+    `/accessed/${pemId}`,
+    `/pems/accessed/${pemId}`,
+    `/api/pems/accessed/${pemId}`,
+  ];
+
+  for (const path of candidates) {
+    try {
+      await axios.patch(`${base}${path}`, accessed, opts);
+      console.log(`Accessed updated for ${pemId}:`, accessed);
+      return;
+    } catch (err: any) {
+      if (err.response?.status === 404) continue; // try next path
+      console.warn(`Failed to update accessed (${path}):`, err.message);
+      return;
+    }
+  }
+
+  console.warn(`All coordinator paths failed for updateAccessed(${pemId}).`);
+}
