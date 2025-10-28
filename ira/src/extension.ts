@@ -335,22 +335,23 @@ function getHraWebviewHtml(state: WebviewState) {
         .btn.ghost { background: transparent; color: var(--fg); border-color: var(--border); }
       </style>
     </head>
-
-    <p style="color: lime;">✅ Webview HTML loaded</p>
-      <script>
-        console.log("[Webview] Script starting...");
-        document.body.insertAdjacentHTML('beforeend', '<p style="color: yellow;">✅ Webview script executed</p>');
-      </script>
-
     <body>
       <div class="card">
         <div class="content">${content}</div>
         <div class="actions">${buttons}</div>
       </div>
-
       <script>
         const vscode = acquireVsCodeApi();
         function sendMessage(command, data = {}) { vscode.postMessage({ command, data }); }
+
+        window.addEventListener('message', event => {
+          const msg = event.data;
+          if (msg.command === 'updateStage') {
+            console.log("[Webview] Updating stage:", msg.data.stage);
+            document.querySelector('.content').innerHTML =
+              '<h3>' + msg.data.stage + '</h3>';
+          }
+        });
 
         // Helper to read payload from button data attribute
         function sendMessageFromButton(btn) {
@@ -364,14 +365,6 @@ function getHraWebviewHtml(state: WebviewState) {
             console.error("Failed to parse button payload", err);
           }
         }
-
-        window.addEventListener('message', event => {
-          const msg = event.data;
-          if (msg.command === 'updateStage') {
-            console.log("[Webview] Updating stage:", msg.data.stage);
-            document.querySelector('.content').innerHTML = "<h3>\${msg.data.stage}</h3>";
-          }
-        });
 
         // Keyboard shortcuts: Enter activates first primary button, Esc closes
         document.addEventListener('keydown', (e) => {
@@ -400,13 +393,12 @@ export function createHraWebview(
     'hraPanel',
     title,
     vscode.ViewColumn.Beside,
-    {
-      enableScripts: true
-    }
+    { enableScripts: true }
   );
 
   const initialMessage = friendlyIntro(isFirstOccurrence);
 
+  // Render initial HTML
   panel.webview.html = getHraWebviewHtml({
     stage: 'initial',
     isFirstOccurrence,
@@ -417,58 +409,64 @@ export function createHraWebview(
     initialMessage
   });
 
-  let currentState: WebviewState = {
-    stage: 'initial',
-    isFirstOccurrence,
-    hint,
-    reasoning,
-    answer,
-    context,
-    initialMessage,
-    seenHint: false,
-    seenReasoning: false,
-  };
+  // Initialize local accessed state (baseline)
+  let accessedState = { hint: false, reasoning: false, answer: false };
 
-  // Handle messages from the Webview
-  panel.webview.onDidReceiveMessage(
-    async message => {
-      console.log("[IRA] Message received from Webview:", message);
-      switch (message.command) {
-        case 'nextStage': {
-          console.log("[IRA] nextStage triggered:", message.data.stage);
+  // Push initial state to DB so field always exists
+  (async () => {
+    try {
+      if (pemId) {
+        await updateAccessed(pemId, accessedState);
+        console.log(`[IRA] Initialized accessed flags for ${pemId}`);
+      }
+    } catch (err) {
+      console.warn("Failed to initialize accessed:", err);
+    }
+  })();
 
-          currentState = { ...currentState, ...message.data };
-          
-          panel.webview.postMessage({
-            command: 'updateStage',
-            data: currentState
-          });
+  // Handle button clicks from webview
+  panel.webview.onDidReceiveMessage(async (message) => {
+    console.log("[IRA] Message received from Webview:", message);
 
-          const stage = message.data.stage;
-          try {
-            if (stage === 'hint') await updateAccessed(pemId!, { hint: true });
-            if (stage === 'reasoning') await updateAccessed(pemId!, { reasoning: true });
-            if (stage === 'answer') await updateAccessed(pemId!, { answer: true });
-          } catch (err) {
-            console.warn("Failed to update accessed:", err);
-          }
-          break;
+    switch (message.command) {
+      case 'nextStage': {
+        const nextStage = message.data.stage as WebviewState['stage'];
+        console.log("[IRA] nextStage triggered:", nextStage);
+
+        // Re-render UI (preserves your full HRA styling)
+        panel.webview.html = getHraWebviewHtml({
+          ...message.data,
+          stage: nextStage,
+        });
+
+        // Update local state — only flip flags to true, never back to false
+        if (nextStage === 'hint') accessedState.hint = true;
+        if (nextStage === 'reasoning') {
+          accessedState.hint = true;
+          accessedState.reasoning = true;
+        }
+        if (nextStage === 'answer') {
+          accessedState.hint = true;
+          accessedState.reasoning = true;
+          accessedState.answer = true;
         }
 
-        case 'close':
-          panel.dispose();
-          break;
-      }
-    },
-    undefined
-  );
+        // Push updated state to backend
+        try {
+          if (pemId) await updateAccessed(pemId, accessedState);
+          console.log(`[IRA] Updated accessed for ${pemId}:`, accessedState);
+        } catch (err) {
+          console.warn("Failed to update accessed:", err);
+        }
 
-  panel.webview.onDidReceiveMessage(async message => {
-    if (message.command === 'updateStage') {
-      console.log("[IRA] updateStage message received on extension side (should not happen)");
+        break;
+      }
+
+      case 'close':
+        panel.dispose();
+        break;
     }
   });
-
 }
 
 // ---------------------- RUNTIME ERROR HANDLING ----------------------
