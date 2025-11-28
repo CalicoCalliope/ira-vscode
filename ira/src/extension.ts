@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 import { exec, spawn } from 'child_process';
 import * as path from 'path';
+import * as fs from 'fs';
 import axios from 'axios';
 import { v4 as uuidv4 } from 'uuid';
 import { logPemToCoordinator, updateAccessed } from "./coordinator-service";
@@ -65,6 +66,7 @@ let lastHighlightState: {
   columnRange?: vscode.Range;
   pointerOption?: vscode.DecorationOptions;
 } | null = null;
+let activeHighlightDocumentVersion: number | null = null;
 
 // ---------------------- CONFIG ----------------------
 const COORDINATOR_URL = 'http://YOUR_VM_IP:PORT'; // kept for reference if needed elsewhere
@@ -501,6 +503,24 @@ export function createHraWebview(
 }
 
 // ---------------------- RUNTIME ERROR HANDLING ----------------------
+function normalizePathForComparison(inputPath: string): string {
+  if (!inputPath) {
+    return '';
+  }
+
+  let resolved = path.resolve(inputPath);
+  try {
+    resolved = fs.realpathSync(inputPath);
+  } catch {
+    // best effort: ignore if path doesn't exist yet
+  }
+
+  const normalized = path.normalize(resolved);
+  return (process.platform === 'win32' || process.platform === 'darwin')
+    ? normalized.toLowerCase()
+    : normalized;
+}
+
 function extractRuntimeError(stderr: string): string | null {
   const lines = stderr.split(/\r?\n/);
 
@@ -551,6 +571,7 @@ function parsePythonTraceback(stderr: string): TracebackFrame[] {
 function clearVisualErrorIndicators() {
   diagnosticCollection.clear();
   lastHighlightState = null;
+  activeHighlightDocumentVersion = null;
 
   const lineDecoration = errorLineDecoration;
   const columnDecoration = errorColumnDecoration;
@@ -575,8 +596,10 @@ function applyInlineErrorHighlight(stderr: string, filePath: string, editor: vsc
     return null;
   }
 
-  const normalizedPath = path.normalize(filePath);
-  const relevantFrame = [...frames].reverse().find((frame) => frame.file === normalizedPath);
+  const normalizedPath = normalizePathForComparison(filePath);
+  const relevantFrame = [...frames]
+    .reverse()
+    .find((frame) => normalizePathForComparison(frame.file) === normalizedPath);
   if (!relevantFrame) {
     return null;
   }
@@ -648,6 +671,7 @@ function applyInlineErrorHighlight(stderr: string, filePath: string, editor: vsc
     columnRange,
     pointerOption
   };
+  activeHighlightDocumentVersion = editor.document.version;
 
   return {
     line: relevantFrame.line,
@@ -855,6 +879,10 @@ export async function runCodeWithIra(filePath: string, language: string) {
     return;
   }
 
+  if (editor.document.isDirty) {
+    await editor.document.save();
+  }
+
   clearVisualErrorIndicators();
   hideTerminalMirror();
 
@@ -936,6 +964,10 @@ export function activate(context: vscode.ExtensionContext) {
     if (!editor || editor.document.languageId !== 'python') {
       vscode.window.showErrorMessage('Open a Python file to run.');
       return;
+    }
+
+    if (editor.document.isDirty) {
+      await editor.document.save();
     }
 
     const py = await resolvePythonCmd();
@@ -1038,6 +1070,24 @@ export function activate(context: vscode.ExtensionContext) {
         const pointerData = state.pointerOption ? [state.pointerOption] : [];
         activeEditor.setDecorations(pointerDecoration, pointerData);
       }
+    })
+  );
+
+  context.subscriptions.push(
+    vscode.workspace.onDidChangeTextDocument((event) => {
+      if (!lastHighlightState) {
+        return;
+      }
+      if (event.document.uri.toString() !== lastHighlightState.uri.toString()) {
+        return;
+      }
+      if (
+        activeHighlightDocumentVersion !== null &&
+        event.document.version === activeHighlightDocumentVersion
+      ) {
+        return;
+      }
+      clearVisualErrorIndicators();
     })
   );
 }
