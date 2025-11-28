@@ -626,7 +626,6 @@ function applyInlineErrorHighlight(stderr: string, filePath: string, editor: vsc
     const pointerRange = new vscode.Range(anchorPosition, anchorPosition);
     const pointerData: vscode.DecorationOptions = {
       range: pointerRange,
-      hoverMessage: runtimeSummary,
       renderOptions: {
         after: {
           contentText: ` ← ${runtimeSummary}`,
