@@ -6,6 +6,11 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 
 ## [Unreleased]
 
+## [0.0.11] - 2025-10-14
+
+- Clarify research-only availability for University of Zurich learners in the marketplace metadata and README.
+- Bump marketplace version and rebuild production bundle for publication.
+
 ## [0.0.10] - 2025-09-30
 
 - Update coordinator base to `/api/pems` and rely on legacy fallbacks for compatibility.

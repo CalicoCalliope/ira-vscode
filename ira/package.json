@@ -1,9 +1,9 @@
 {
   "name": "ira",
   "displayName": "IRA",
-  "description": "A learning-centric IDE plugin designed to empower novice programmers in reading and understanding programming error messages (PEMs) with confidence and autonomy.",
+  "description": "A learning-centric IDE plugin designed to empower novice programmers in reading and understanding programming error messages (PEMs) with confidence and autonomy. Research-only IDE plugin for University of Zurich learners, helping novices understand programming error messages (PEMs).",
   "publisher": "ira-team",
-  "version": "0.0.10",
+  "version": "0.0.11",
   "icon": "media/ira-icon.png",
   "galleryBanner": {
     "color": "#0d1117",

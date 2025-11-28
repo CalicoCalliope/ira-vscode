@@ -40,6 +40,32 @@ interface WebviewState {
   seenReasoning?: boolean;
 }
 
+interface TracebackFrame {
+  file: string;
+  line: number;
+  column?: number;
+  functionName?: string;
+}
+
+interface HighlightMetadata {
+  line: number;
+  column?: number;
+  displayText: string;
+  pointerText: string;
+}
+
+const diagnosticCollection = vscode.languages.createDiagnosticCollection('ira');
+let errorLineDecoration: vscode.TextEditorDecorationType | undefined;
+let errorColumnDecoration: vscode.TextEditorDecorationType | undefined;
+let errorPointerDecoration: vscode.TextEditorDecorationType | undefined;
+let terminalMirrorPanel: vscode.WebviewPanel | undefined;
+let lastHighlightState: {
+  uri: vscode.Uri;
+  lineRange: vscode.Range;
+  columnRange?: vscode.Range;
+  pointerOption?: vscode.DecorationOptions;
+} | null = null;
+
 // ---------------------- CONFIG ----------------------
 const COORDINATOR_URL = 'http://YOUR_VM_IP:PORT'; // kept for reference if needed elsewhere
 
@@ -313,11 +339,12 @@ function getHraWebviewHtml(state: WebviewState) {
           --btn-fg: var(--vscode-button-foreground);
           --btn-bg: var(--vscode-button-background);
           --btn-hover: var(--vscode-button-hoverBackground);
-          --btn-border: #16a34a;
+          --accent-green: #16a34a;
+          --btn-border: var(--accent-green);
           --btn-secondary-bg: var(--vscode-button-secondaryBackground, #2a2e3a);
           --btn-secondary-fg: var(--vscode-button-secondaryForeground, var(--vscode-foreground));
           --input-bg: var(--vscode-input-background);
-          --btn-primary-bg: #16a34a;
+          --btn-primary-bg: var(--accent-green);
           --btn-primary-hover: #15803d;
         }
         * { box-sizing: border-box; }
@@ -440,7 +467,9 @@ export function createHraWebview(
         });
 
         // Update local state — only flip flags to true, never back to false
-        if (nextStage === 'hint') accessedState.hint = true;
+        if (nextStage === 'hint') {
+          accessedState.hint = true;
+        }
         if (nextStage === 'reasoning') {
           accessedState.hint = true;
           accessedState.reasoning = true;
@@ -453,7 +482,9 @@ export function createHraWebview(
 
         // Push updated state to backend
         try {
-          if (pemId) await updateAccessed(pemId, accessedState);
+          if (pemId) {
+            await updateAccessed(pemId, accessedState);
+          }
           console.log(`[IRA] Updated accessed for ${pemId}:`, accessedState);
         } catch (err) {
           console.warn("Failed to update accessed:", err);
@@ -471,13 +502,342 @@ export function createHraWebview(
 
 // ---------------------- RUNTIME ERROR HANDLING ----------------------
 function extractRuntimeError(stderr: string): string | null {
-  const match = stderr.match(/Exception:.*|Error:.*|Traceback \(most recent call last\):/i);
-  return match ? match[0] : null;
+  const lines = stderr.split(/\r?\n/);
+
+  for (let i = lines.length - 1; i >= 0; i -= 1) {
+    const candidate = lines[i]?.trim();
+    if (!candidate) {
+      continue;
+    }
+    if (/(Exception|Error)\b/i.test(candidate)) {
+      return candidate;
+    }
+  }
+
+  const tracebackLine = lines.find((line) => /Traceback \(most recent call last\):/i.test(line));
+  return tracebackLine ? tracebackLine.trim() : null;
+}
+
+function parsePythonTraceback(stderr: string): TracebackFrame[] {
+  const frames: TracebackFrame[] = [];
+  const lines = stderr.split(/\r?\n/);
+
+  for (let i = 0; i < lines.length; i += 1) {
+    const fileMatch = lines[i]?.match(/\s*File "([^"]+)", line (\d+)(?:, in ([^\r\n]+))?/);
+    if (!fileMatch) {
+      continue;
+    }
+
+    const filePath = path.normalize(fileMatch[1]);
+    const lineNumber = Number(fileMatch[2]);
+    const functionName = fileMatch[3]?.trim();
+
+    const codeLine = lines[i + 1] ?? '';
+    const caretLine = lines[i + 2] ?? '';
+    const caretIndex = caretLine.indexOf('^');
+    const column = caretIndex >= 0 ? caretIndex : undefined;
+
+    frames.push({
+      file: filePath,
+      line: lineNumber,
+      column,
+      functionName
+    });
+  }
+
+  return frames;
+}
+
+function clearVisualErrorIndicators() {
+  diagnosticCollection.clear();
+  lastHighlightState = null;
+
+  const lineDecoration = errorLineDecoration;
+  const columnDecoration = errorColumnDecoration;
+  const pointerDecoration = errorPointerDecoration;
+
+  vscode.window.visibleTextEditors.forEach((activeEditor) => {
+    if (lineDecoration) {
+      activeEditor.setDecorations(lineDecoration, []);
+    }
+    if (columnDecoration) {
+      activeEditor.setDecorations(columnDecoration, []);
+    }
+    if (pointerDecoration) {
+      activeEditor.setDecorations(pointerDecoration, []);
+    }
+  });
+}
+
+function applyInlineErrorHighlight(stderr: string, filePath: string, editor: vscode.TextEditor): HighlightMetadata | null {
+  const frames = parsePythonTraceback(stderr);
+  if (!frames.length) {
+    return null;
+  }
+
+  const normalizedPath = path.normalize(filePath);
+  const relevantFrame = [...frames].reverse().find((frame) => frame.file === normalizedPath);
+  if (!relevantFrame) {
+    return null;
+  }
+
+  const zeroBasedLine = Math.max(relevantFrame.line - 1, 0);
+  if (zeroBasedLine >= editor.document.lineCount) {
+    return null;
+  }
+
+  const lineText = editor.document.lineAt(zeroBasedLine).text;
+  const lineRange = new vscode.Range(zeroBasedLine, 0, zeroBasedLine, lineText.length);
+  const runtimeSummary = extractRuntimeError(stderr) ?? 'Runtime error';
+  const diagnostic = new vscode.Diagnostic(lineRange, runtimeSummary, vscode.DiagnosticSeverity.Error);
+  diagnostic.source = 'IRA';
+
+  diagnosticCollection.set(editor.document.uri, [diagnostic]);
+
+  const lineDecoration = errorLineDecoration;
+  const columnDecoration = errorColumnDecoration;
+  const pointerDecoration = errorPointerDecoration;
+  let pointerOption: vscode.DecorationOptions | undefined;
+  let columnRange: vscode.Range | undefined;
+
+  if (lineDecoration) {
+    editor.setDecorations(lineDecoration, [lineRange]);
+  }
+
+  const rawColumn = typeof relevantFrame.column === 'number' && relevantFrame.column >= 0
+    ? Math.min(relevantFrame.column, lineText.length)
+    : undefined;
+
+  if (columnDecoration) {
+    if (rawColumn !== undefined) {
+      const columnStart = new vscode.Position(zeroBasedLine, rawColumn);
+      const columnEnd = rawColumn < lineText.length
+        ? new vscode.Position(zeroBasedLine, rawColumn + 1)
+        : columnStart;
+      columnRange = new vscode.Range(columnStart, columnEnd);
+      editor.setDecorations(columnDecoration, [columnRange]);
+    } else {
+      editor.setDecorations(columnDecoration, []);
+    }
+  }
+
+  if (pointerDecoration) {
+    const anchorPosition = columnRange?.end ?? new vscode.Position(zeroBasedLine, lineText.length);
+    const pointerRange = new vscode.Range(anchorPosition, anchorPosition);
+    const pointerData: vscode.DecorationOptions = {
+      range: pointerRange,
+      hoverMessage: runtimeSummary,
+      renderOptions: {
+        after: {
+          contentText: ` ← ${runtimeSummary}`,
+          color: '#16a34a',
+          backgroundColor: 'rgba(22, 163, 74, 0.15)',
+          margin: '0 0 0 8px',
+          fontWeight: '600',
+          textDecoration: 'none'
+        }
+      }
+    };
+    pointerOption = pointerData;
+    editor.setDecorations(pointerDecoration, [pointerData]);
+  }
+
+  editor.revealRange(lineRange, vscode.TextEditorRevealType.InCenterIfOutsideViewport);
+  lastHighlightState = {
+    uri: editor.document.uri,
+    lineRange,
+    columnRange,
+    pointerOption
+  };
+
+  return {
+    line: relevantFrame.line,
+    column: rawColumn !== undefined ? rawColumn + 1 : undefined,
+    displayText: `Line ${relevantFrame.line}${rawColumn !== undefined ? `, column ${rawColumn + 1}` : ''}: ${lineText.trim() || '<empty>'}`,
+    pointerText: runtimeSummary
+  };
+}
+
+function stripAnsiCodes(value: string): string {
+  return value.replace(/\x1b\[[0-9;]*m/g, '');
+}
+
+function escapeTerminalHtml(value: string): string {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function getTerminalMirrorHtml(
+  lines: string[],
+  highlightIndices: Set<number>,
+  pointers: Map<number, string>,
+  focus?: HighlightMetadata
+): string {
+  const rendered = lines
+    .map((line, index) => {
+      const classes = highlightIndices.has(index) ? 'line highlight' : 'line';
+      const pointerText = pointers.get(index);
+      const pointerMarkup = pointerText ? `<span class="pointer">${escapeTerminalHtml(pointerText)}</span>` : '';
+      const content = line.length ? escapeTerminalHtml(line) : '&nbsp;';
+      return `<div class="${classes}" data-line="${index}"><span class="line-number">${index + 1}</span><span class="line-text">${content}</span>${pointerMarkup}</div>`;
+    })
+    .join('');
+
+  const focusMarkup = focus
+    ? `<div class="focus-hint">Focus on ${escapeTerminalHtml(focus.displayText)}</div>`
+    : '';
+
+  return `<!DOCTYPE html>
+  <html lang="en">
+    <head>
+      <meta charset="UTF-8">
+      <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline';">
+      <meta name="viewport" content="width=device-width, initial-scale=1" />
+      <title>IRA Terminal Mirror</title>
+      <style>
+        :root {
+          --fg: var(--vscode-foreground);
+          --bg: var(--vscode-editor-background);
+          --border: var(--vscode-panel-border);
+          --accent: #16a34a;
+          --highlight-bg: rgba(22, 163, 74, 0.12);
+        }
+        body {
+          margin: 0;
+          background: var(--bg);
+          color: var(--fg);
+          font: 12px/1.5 Menlo, Monaco, Consolas, "Courier New", monospace;
+        }
+        .wrapper {
+          padding: 16px;
+        }
+        .focus-hint {
+          margin-bottom: 12px;
+          padding: 8px 10px;
+          border-left: 3px solid var(--accent);
+          background: rgba(249, 115, 22, 0.08);
+          border-radius: 6px;
+        }
+        .terminal {
+          border: 1px solid var(--border);
+          border-radius: 8px;
+          overflow: auto;
+          max-height: 60vh;
+        }
+        .line {
+          display: flex;
+          gap: 12px;
+          padding: 4px 12px;
+        }
+        .line + .line {
+          border-top: 1px solid rgba(255,255,255,0.04);
+        }
+        .line.highlight {
+          background: var(--highlight-bg);
+          position: relative;
+        }
+        .line-number {
+          opacity: 0.4;
+          min-width: 32px;
+          text-align: right;
+        }
+        .pointer {
+          margin-left: auto;
+          color: var(--accent);
+          font-size: 11px;
+          font-weight: 600;
+          display: flex;
+          align-items: center;
+          gap: 4px;
+        }
+        .pointer::before {
+          content: "↳";
+        }
+      </style>
+    </head>
+    <body>
+      <div class="wrapper">
+        ${focusMarkup}
+        <div class="terminal">${rendered}</div>
+      </div>
+      <script>
+        const highlight = document.querySelector('.line.highlight');
+        if (highlight) {
+          highlight.scrollIntoView({ block: 'center', behavior: 'smooth' });
+        }
+      </script>
+    </body>
+  </html>`;
+}
+
+function showTerminalMirror(rawOutput: string, focus?: HighlightMetadata | null) {
+  const cleanedOutput = stripAnsiCodes(rawOutput);
+  const lines = cleanedOutput.split(/\r?\n/);
+
+  if (!lines.length || (lines.length === 1 && lines[0] === '')) {
+    lines.splice(0, lines.length, '<no stderr captured>');
+  }
+
+  const highlightIndices = new Set<number>();
+  const pointers = new Map<number, string>();
+
+  lines.forEach((line, index) => {
+    if (/Traceback/i.test(line) || /Error:/i.test(line) || /Exception:/i.test(line)) {
+      highlightIndices.add(index);
+    }
+    if (/File ".*", line \d+/.test(line)) {
+      highlightIndices.add(index);
+    }
+  });
+
+  if (focus) {
+    const pointerIndex = lines.findIndex((line) => line.includes(`line ${focus.line}`));
+    if (pointerIndex >= 0) {
+      highlightIndices.add(pointerIndex);
+      const pointerLabel = focus.pointerText || `Matches ${focus.displayText}`;
+      pointers.set(pointerIndex, pointerLabel);
+    }
+  }
+
+  if (highlightIndices.size === 0 && lines.length) {
+    highlightIndices.add(lines.length - 1);
+  }
+
+  let panel = terminalMirrorPanel;
+  if (!panel) {
+    panel = vscode.window.createWebviewPanel(
+      'iraTerminalMirror',
+      'IRA Terminal Mirror',
+      vscode.ViewColumn.Beside,
+      { enableScripts: true }
+    );
+    panel.onDidDispose(() => {
+      terminalMirrorPanel = undefined;
+    });
+    terminalMirrorPanel = panel;
+  } else {
+    panel.reveal(vscode.ViewColumn.Beside);
+  }
+
+  panel.webview.html = getTerminalMirrorHtml(lines, highlightIndices, pointers, focus ?? undefined);
+}
+
+function hideTerminalMirror() {
+  if (terminalMirrorPanel) {
+    terminalMirrorPanel.dispose();
+    terminalMirrorPanel = undefined;
+  }
 }
 
 // ---------------------- RUN WITH IRA ----------------------
 function extractPatchedCode(answerStr?: string): string | undefined {
-  if (!answerStr) return undefined;
+  if (!answerStr) {
+    return undefined;
+  }
 
   // Match "Patched code:" and capture all lines until a line that starts with "Patch" or "Confidence"
   const match = answerStr.match(/Patched code:\r?\n([\s\S]*?)(?=\r?\n(Patch|Confidence))/);
@@ -496,6 +856,9 @@ export async function runCodeWithIra(filePath: string, language: string) {
     return;
   }
 
+  clearVisualErrorIndicators();
+  hideTerminalMirror();
+
   const py = await resolvePythonCmd();
 
   const code = editor.document.getText();
@@ -505,10 +868,22 @@ export async function runCodeWithIra(filePath: string, language: string) {
       console.log(`[stdout]: ${stdout}`);
     }
 
-    if (stderr) {
-      const pem = `[RUNTIME ERROR] ${stderr}`;
-      const pemType = extractPemType(stderr);
-      const pemSkeleton = await getPemSkeletonFromPython(pem);
+    const normalizedStderr = stderr ?? '';
+    const effectiveStderr = normalizedStderr.trim().length ? normalizedStderr : (error ? `${error.message}` : '');
+    if (!effectiveStderr.trim()) {
+      return;
+    }
+
+    const highlightInfo = applyInlineErrorHighlight(effectiveStderr, filePath, editor);
+    if (highlightInfo) {
+      hideTerminalMirror();
+    } else {
+      showTerminalMirror(effectiveStderr, null);
+    }
+
+    const pem = `[RUNTIME ERROR] ${effectiveStderr}`;
+    const pemType = extractPemType(effectiveStderr);
+    const pemSkeleton = await getPemSkeletonFromPython(pem);
       const envInfo = await getEnvInfo();
 
       // Build log entry for coordinator
@@ -530,24 +905,27 @@ export async function runCodeWithIra(filePath: string, language: string) {
       };
 
       // Send to coordinator and get enriched response (HRA + firstOccurrence + context)
-      const coordinatorResponse = await logPemToCoordinator(pemLogEntry);
-      const patchedCode = extractPatchedCode(coordinatorResponse.answer) ?? '';
+    const coordinatorResponse = await logPemToCoordinator(pemLogEntry);
+    const patchedCode = extractPatchedCode(coordinatorResponse.answer) ?? '';
 
-      // coordinatorResponse should include:
-      // { isFirstOccurrence, hint, reasoning, answer, context? }      
+    const combinedContext = highlightInfo
+      ? [highlightInfo.displayText, highlightInfo.pointerText, coordinatorResponse.context].filter(Boolean).join('\n\n')
+      : coordinatorResponse.context;
 
-      createHraWebview(
-        'IRA Guidance',
-        coordinatorResponse.isFirstOccurrence,
-        coordinatorResponse.hint,
-        coordinatorResponse.reasoning,
-        patchedCode,
-        coordinatorResponse.context,
-        pemLogEntry.id
-      );
+    createHraWebview(
+      'IRA Guidance',
+      coordinatorResponse.isFirstOccurrence,
+      coordinatorResponse.hint,
+      coordinatorResponse.reasoning,
+      patchedCode,
+      combinedContext,
+      pemLogEntry.id
+    );
 
-      vscode.window.showErrorMessage(`Runtime error (${pemType}) occurred. HRA panel opened.`);
-    }
+    const lineHint = highlightInfo
+      ? ` on line ${highlightInfo.line}${highlightInfo.column ? `, column ${highlightInfo.column}` : ''}`
+      : '';
+    vscode.window.showErrorMessage(`Runtime error (${pemType})${lineHint}. HRA panel opened.`);
   });
 }
 
@@ -585,7 +963,87 @@ export function activate(context: vscode.ExtensionContext) {
   runButton.show();
 
   context.subscriptions.push(runButton);
+  context.subscriptions.push(diagnosticCollection);
+
+  if (!errorLineDecoration) {
+    errorLineDecoration = vscode.window.createTextEditorDecorationType({
+      isWholeLine: true,
+      light: {
+        backgroundColor: 'rgba(167, 243, 208, 0.55)',
+        border: '1px solid rgba(21, 128, 61, 0.7)'
+      },
+      dark: {
+        backgroundColor: 'rgba(22, 163, 74, 0.25)',
+        border: '1px solid rgba(74, 222, 128, 0.45)'
+      },
+      borderRadius: '4px',
+      overviewRulerColor: new vscode.ThemeColor('editorError.foreground'),
+      overviewRulerLane: vscode.OverviewRulerLane.Right
+    });
+  }
+
+  if (!errorColumnDecoration) {
+    errorColumnDecoration = vscode.window.createTextEditorDecorationType({
+      light: {
+        backgroundColor: 'rgba(187, 247, 208, 0.95)',
+        border: '1px solid rgba(21, 128, 61, 0.6)'
+      },
+      dark: {
+        backgroundColor: 'rgba(34, 197, 94, 0.55)',
+        border: '1px solid rgba(187, 247, 208, 0.6)'
+      },
+      borderRadius: '3px'
+    });
+  }
+
+  if (!errorPointerDecoration) {
+    errorPointerDecoration = vscode.window.createTextEditorDecorationType({});
+  }
+
+  if (errorLineDecoration) {
+    context.subscriptions.push(errorLineDecoration);
+  }
+
+  if (errorColumnDecoration) {
+    context.subscriptions.push(errorColumnDecoration);
+  }
+
+  if (errorPointerDecoration) {
+    context.subscriptions.push(errorPointerDecoration);
+  }
+
+  context.subscriptions.push(
+    vscode.window.onDidChangeActiveTextEditor((activeEditor) => {
+      const lineDecoration = errorLineDecoration;
+      const columnDecoration = errorColumnDecoration;
+      const pointerDecoration = errorPointerDecoration;
+      const state = lastHighlightState;
+      if (!activeEditor || !state) {
+        return;
+      }
+
+      if (activeEditor.document.uri.toString() !== state.uri.toString()) {
+        return;
+      }
+
+      if (lineDecoration) {
+        activeEditor.setDecorations(lineDecoration, [state.lineRange]);
+      }
+
+      if (columnDecoration) {
+        const columnData = state.columnRange ? [state.columnRange] : [];
+        activeEditor.setDecorations(columnDecoration, columnData);
+      }
+
+      if (pointerDecoration) {
+        const pointerData = state.pointerOption ? [state.pointerOption] : [];
+        activeEditor.setDecorations(pointerDecoration, pointerData);
+      }
+    })
+  );
 }
 
 export function deactivate() {
+  clearVisualErrorIndicators();
+  hideTerminalMirror();
 }
