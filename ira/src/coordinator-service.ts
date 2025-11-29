@@ -78,9 +78,11 @@ function normalize(data: any): CoordinatorResponse {
  * Send a PEM log to the coordinator and return tiers from the LLM pipeline.
  * Tries preferred endpoint first, falls back to legacy paths if needed.
  */
-export async function logPemToCoordinator(entry: any): Promise<CoordinatorResponse> {
+export async function logPemToCoordinator(entry: any, mode: 'full' | 'baseline' = 'full'): Promise<CoordinatorResponse> {
   const { base, apiKey } = getConfig();
   const opts = { headers: headers(apiKey), timeout: 20000 };
+
+  const bodyWithMode = { ...entry, mode };
 
   const candidates = [
     '/v1/pems',                // preferred JSON API path
@@ -92,7 +94,7 @@ export async function logPemToCoordinator(entry: any): Promise<CoordinatorRespon
   let lastErr: any = null;
   for (const path of candidates) {
     try {
-      const { data } = await axios.post(`${base}${path}`, entry, opts);
+      const { data } = await axios.post(`${base}${path}`, bodyWithMode, opts);
       return normalize(data);
     } catch (err) {
       const e = err as AxiosError;

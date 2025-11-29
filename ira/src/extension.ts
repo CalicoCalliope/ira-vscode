@@ -231,7 +231,7 @@ async function sendPemLog(entry: PemLogEntry): Promise<string> {
 }
 
 // ---------------------- WEBVIEW UI ----------------------
-function getHraWebviewHtml(state: WebviewState) {
+function getHraWebviewHtml(state: WebviewState, mode: 'full' | 'baseline' = 'full') {
   const {
     stage,
     isFirstOccurrence,
@@ -259,7 +259,7 @@ function getHraWebviewHtml(state: WebviewState) {
       .replace(/"/g, "&quot;")
       .replace(/'/g, "&#39;")
       .replace(/\n/g, "<br>");
-
+      
   // Helper to generate buttons safely
   const createButton = (label: string, payloadObj?: any, type: "primary" | "ghost" | "default" = "default") => {
     const payload = payloadObj ? JSON.stringify(payloadObj).replace(/'/g, "&apos;") : "";
@@ -288,40 +288,46 @@ function getHraWebviewHtml(state: WebviewState) {
     stage: nextStage
   });
 
-  // Generate content and buttons per stage
-  switch (stage) {
-    case 'initial':
-      content = escapeHtml(initialMessage) + (context && !isFirstOccurrence ? `<pre class="context">${escapeHtml(context)}</pre>` : '');
-      buttons = `
-        ${createButton("Yes, I am lost. Show me step-by-step please 😬", buildPayload("hint", { seenHint: true }), "primary")}
-        ${createButton("Hmmmm. Walk me through why this happened 🧭", buildPayload("reasoning", { seenReasoning: true }))}
-        ${createButton("I can do this! I do not need help right now 💪")}
-      `;
-      break;
-    case 'hint':
-      content = `<h3>What's happening</h3><p>${escapeHtml(hint)}</p>`;
-      buttons = `
-        ${createButton("Teach me why this happened 🧠", buildPayload("reasoning", { seenHint: true, seenReasoning: true }), "primary")}
-        ${createButton("Okay, I got it 👍")}
-      `;
-      break;
-    case 'reasoning': {
-      content = `<h3>Why it happens</h3><p>${escapeHtml(reasoning)}</p>`;
-      const fixButton = hasSeenHint ? createButton("Show me how to fix this type of error", buildPayload("answer"), "ghost") : '';
-      buttons = `
-        ${createButton("Back to \"What's happening\" 🔙", buildPayload("hint", { seenHint: true }))}
-        ${createButton("I'm ready to tackle this myself 💪", undefined, "primary")}
-        ${fixButton}
-      `;
-      break;
+  // For baseline, always show only answer
+  if (mode === 'baseline') {
+    content = `<h3>How to fix it</h3><p>${escapeHtml(answer)}</p>`;
+    buttons = `<button class="btn primary" onclick="sendMessage('close')">Got it 👍</button>`;
+  } else {
+    // Generate content and buttons per stage
+    switch (stage) {
+      case 'initial':
+        content = escapeHtml(initialMessage) + (context && !isFirstOccurrence ? `<pre class="context">${escapeHtml(context)}</pre>` : '');
+        buttons = `
+          ${createButton("Yes, I am lost. Show me step-by-step please 😬", buildPayload("hint", { seenHint: true }), "primary")}
+          ${createButton("Hmmmm. Walk me through why this happened 🧭", buildPayload("reasoning", { seenReasoning: true }))}
+          ${createButton("I can do this! I do not need help right now 💪")}
+        `;
+        break;
+      case 'hint':
+        content = `<h3>What's happening</h3><p>${escapeHtml(hint)}</p>`;
+        buttons = `
+          ${createButton("Teach me why this happened 🧠", buildPayload("reasoning", { seenHint: true, seenReasoning: true }), "primary")}
+          ${createButton("Okay, I got it 👍")}
+        `;
+        break;
+      case 'reasoning': {
+        content = `<h3>Why it happens</h3><p>${escapeHtml(reasoning)}</p>`;
+        const fixButton = hasSeenHint ? createButton("Show me how to fix this type of error", buildPayload("answer"), "ghost") : '';
+        buttons = `
+          ${createButton("Back to \"What's happening\" 🔙", buildPayload("hint", { seenHint: true }))}
+          ${createButton("I'm ready to tackle this myself 💪", undefined, "primary")}
+          ${fixButton}
+        `;
+        break;
+      }
+      case 'answer':
+        content = `<h3>How to fix it</h3><p>${escapeHtml(answer)}</p>`;
+        buttons = `
+          ${createButton("Got it 👍")}
+          ${createButton("Explain how it works 🧠", buildPayload("reasoning", { seenHint: true, seenReasoning: true }))}
+        `;
+        break;
     }
-    case 'answer':
-      content = `<h3>How to fix it</h3><p>${escapeHtml(answer)}</p>`;
-      buttons = `
-        ${createButton("Got it 👍")}
-        ${createButton("Explain how it works 🧠", buildPayload("reasoning", { seenHint: true, seenReasoning: true }))}
-      `;
-      break;
   }
 
   return `
@@ -408,6 +414,7 @@ function getHraWebviewHtml(state: WebviewState) {
     </html>
   `;
 }
+
 // ---------------------- WEBVIEW CREATION ----------------------
 export function createHraWebview(
   title: string,
@@ -416,7 +423,8 @@ export function createHraWebview(
   reasoning?: string,
   answer?: string,
   context?: string,
-  pemId?: string
+  pemId?: string,
+  mode: 'full' | 'baseline' = 'full'
 ) {
   const panel = vscode.window.createWebviewPanel(
     'hraPanel',
@@ -436,7 +444,8 @@ export function createHraWebview(
     answer,
     context,
     initialMessage
-  });
+  },
+  mode);
 
   // Initialize local accessed state (baseline)
   let accessedState = { hint: false, reasoning: false, answer: false };
@@ -466,6 +475,7 @@ export function createHraWebview(
         panel.webview.html = getHraWebviewHtml({
           ...message.data,
           stage: nextStage,
+          mode
         });
 
         // Update local state — only flip flags to true, never back to false
@@ -873,7 +883,7 @@ function extractPatchedCode(answerStr?: string): string | undefined {
   return undefined;
 }
 
-export async function runCodeWithIra(filePath: string, language: string) {
+export async function runCodeWithIra(filePath: string, language: string, mode: 'full' | 'baseline' = 'full') {
   const editor = vscode.window.activeTextEditor;
   if (!editor){
     return;
@@ -932,7 +942,7 @@ export async function runCodeWithIra(filePath: string, language: string) {
       };
 
       // Send to coordinator and get enriched response (HRA + firstOccurrence + context)
-    const coordinatorResponse = await logPemToCoordinator(pemLogEntry);
+    const coordinatorResponse = await logPemToCoordinator(pemLogEntry, mode);
     const patchedCode = extractPatchedCode(coordinatorResponse.answer) ?? '';
 
     const combinedContext = highlightInfo
@@ -946,7 +956,8 @@ export async function runCodeWithIra(filePath: string, language: string) {
       coordinatorResponse.reasoning,
       patchedCode,
       combinedContext,
-      pemLogEntry.id
+      pemLogEntry.id,
+      mode
     );
 
     const lineHint = highlightInfo
@@ -958,6 +969,9 @@ export async function runCodeWithIra(filePath: string, language: string) {
 
 // ---------------------- EXTENSION ACTIVATION ----------------------
 export function activate(context: vscode.ExtensionContext) {
+  const modeEnv = process.env.IRA_MODE || 'baseline'; // default to baseline
+  const mode: 'full' | 'baseline' = modeEnv as 'full' | 'baseline';
+
   // Register the "Run with Ira" command
   const runAndCaptureErrors = vscode.commands.registerCommand('IRA.runPythonAndCaptureErrors', async () => {
     const editor = vscode.window.activeTextEditor;
@@ -980,7 +994,7 @@ export function activate(context: vscode.ExtensionContext) {
     terminal.sendText(`${py} "${filePath}"`);
     terminal.show();
 
-    runCodeWithIra(filePath, language);
+    runCodeWithIra(filePath, language, mode);
   });
 
   context.subscriptions.push(runAndCaptureErrors);
