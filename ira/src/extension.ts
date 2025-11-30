@@ -46,6 +46,7 @@ interface TracebackFrame {
   line: number;
   column?: number;
   functionName?: string;
+  errorMessage?: string;
 }
 
 interface HighlightMetadata {
@@ -531,6 +532,69 @@ function normalizePathForComparison(inputPath: string): string {
     : normalized;
 }
 
+function extractPreferredBracket(errorMessage?: string): string | undefined {
+  if (!errorMessage) {
+    return undefined;
+  }
+  const match = errorMessage.match(/['"]([\(\[\{])['"] was never closed/i);
+  return match ? match[1] : undefined;
+}
+
+function findUnclosedBracketPosition(
+  document: vscode.TextDocument,
+  limitLine: number,
+  preferChar?: string
+): { line: number; column: number } | null {
+  const openings = ['(', '[', '{'];
+  const closingMap = new Map<string, string>([
+    [')', '('],
+    [']', '['],
+    ['}', '{']
+  ]);
+  const stack: Array<{ char: string; line: number; column: number }> = [];
+  const maxLine = Math.min(Math.max(limitLine, 0), document.lineCount - 1);
+
+  for (let line = 0; line <= maxLine; line += 1) {
+    const text = document.lineAt(line).text;
+    for (let column = 0; column < text.length; column += 1) {
+      const char = text[column];
+      if (openings.includes(char)) {
+        stack.push({ char, line, column });
+      } else if (closingMap.has(char)) {
+        const match = closingMap.get(char);
+        const top = stack[stack.length - 1];
+        if (top && top.char === match) {
+          stack.pop();
+        }
+      }
+    }
+  }
+
+  if (!stack.length) {
+    return null;
+  }
+
+  if (preferChar) {
+    for (let i = stack.length - 1; i >= 0; i -= 1) {
+      if (stack[i].char === preferChar) {
+        return { line: stack[i].line, column: stack[i].column };
+      }
+    }
+  }
+
+  const last = stack[stack.length - 1];
+  return { line: last.line, column: last.column };
+}
+
+function findLikelySyntaxOrigin(
+  document: vscode.TextDocument,
+  errorLine: number,
+  errorMessage?: string
+): { line: number; column: number } | null {
+  const prefer = extractPreferredBracket(errorMessage);
+  return findUnclosedBracketPosition(document, errorLine, prefer);
+}
+
 function extractRuntimeError(stderr: string): string | null {
   const lines = stderr.split(/\r?\n/);
 
@@ -549,33 +613,71 @@ function extractRuntimeError(stderr: string): string | null {
 }
 
 function parsePythonTraceback(stderr: string): TracebackFrame[] {
-  const frames: TracebackFrame[] = [];
   const lines = stderr.split(/\r?\n/);
+  const frames: TracebackFrame[] = [];
+  let pendingErrorMessage: string | undefined;
 
-  for (let i = 0; i < lines.length; i += 1) {
-    const fileMatch = lines[i]?.match(/\s*File "([^"]+)", line (\d+)(?:, in ([^\r\n]+))?/);
-    if (!fileMatch) {
+  for (let i = lines.length - 1; i >= 0; i -= 1) {
+    const rawLine = lines[i] ?? '';
+    const fileMatch = rawLine.match(/\s*File "([^"]+)", line (\d+)(?:, in ([^\r\n]+))?/);
+    if (fileMatch) {
+      const filePath = path.normalize(fileMatch[1]);
+      const lineNumber = Number(fileMatch[2]);
+      const functionName = fileMatch[3]?.trim();
+
+      const codeLine = lines[i + 1] ?? '';
+      const caretLine = lines[i + 2] ?? '';
+      const caretIndex = caretLine.indexOf('^');
+      const column = caretIndex >= 0 ? caretIndex : undefined;
+
+      const frame: TracebackFrame = {
+        file: filePath,
+        line: lineNumber,
+        column,
+        functionName,
+        errorMessage: pendingErrorMessage
+      };
+
+      frames.unshift(frame);
       continue;
     }
 
-    const filePath = path.normalize(fileMatch[1]);
-    const lineNumber = Number(fileMatch[2]);
-    const functionName = fileMatch[3]?.trim();
+    const trimmed = rawLine.trim();
+    if (!pendingErrorMessage && /^[A-Za-z]+Error:/i.test(trimmed)) {
+      pendingErrorMessage = trimmed;
+      continue;
+    }
 
-    const codeLine = lines[i + 1] ?? '';
-    const caretLine = lines[i + 2] ?? '';
-    const caretIndex = caretLine.indexOf('^');
-    const column = caretIndex >= 0 ? caretIndex : undefined;
+    if (frames.length === 0) {
+      continue;
+    }
 
-    frames.push({
-      file: filePath,
-      line: lineNumber,
-      column,
-      functionName
-    });
+    if (/Traceback \(most recent call last\):/i.test(trimmed)) {
+      continue;
+    }
+
+    if (!rawLine.startsWith(' ')) {
+      break;
+    }
   }
 
   return frames;
+}
+
+function shouldIgnoreCaret(errorMessage?: string): boolean {
+  if (!errorMessage) {
+    return false;
+  }
+  if (!/SyntaxError/i.test(errorMessage)) {
+    return false;
+  }
+  const patterns = [
+    /unexpected EOF while parsing/i,
+    /was never closed/i,
+    /unterminated/i,
+    /EOL while scanning string literal/i
+  ];
+  return patterns.some((regex) => regex.test(errorMessage));
 }
 
 function clearVisualErrorIndicators() {
@@ -614,13 +716,21 @@ function applyInlineErrorHighlight(stderr: string, filePath: string, editor: vsc
     return null;
   }
 
-  const zeroBasedLine = Math.max(relevantFrame.line - 1, 0);
-  if (zeroBasedLine >= editor.document.lineCount) {
+  let targetLine = Math.max(relevantFrame.line - 1, 0);
+  if (targetLine >= editor.document.lineCount) {
     return null;
   }
 
-  const lineText = editor.document.lineAt(zeroBasedLine).text;
-  const lineRange = new vscode.Range(zeroBasedLine, 0, zeroBasedLine, lineText.length);
+  const ignoreCaret = shouldIgnoreCaret(relevantFrame.errorMessage);
+  if (ignoreCaret) {
+    const origin = findLikelySyntaxOrigin(editor.document, targetLine, relevantFrame.errorMessage);
+    if (origin) {
+      targetLine = origin.line;
+    }
+  }
+
+  const lineText = editor.document.lineAt(targetLine).text;
+  const lineRange = new vscode.Range(targetLine, 0, targetLine, lineText.length);
   const runtimeSummary = extractRuntimeError(stderr) ?? 'Runtime error';
   const diagnostic = new vscode.Diagnostic(lineRange, runtimeSummary, vscode.DiagnosticSeverity.Error);
   diagnostic.source = 'IRA';
@@ -637,15 +747,15 @@ function applyInlineErrorHighlight(stderr: string, filePath: string, editor: vsc
     editor.setDecorations(lineDecoration, [lineRange]);
   }
 
-  const rawColumn = typeof relevantFrame.column === 'number' && relevantFrame.column >= 0
+  const rawColumn = !ignoreCaret && typeof relevantFrame.column === 'number' && relevantFrame.column >= 0
     ? Math.min(relevantFrame.column, lineText.length)
     : undefined;
 
   if (columnDecoration) {
     if (rawColumn !== undefined) {
-      const columnStart = new vscode.Position(zeroBasedLine, rawColumn);
+      const columnStart = new vscode.Position(targetLine, rawColumn);
       const columnEnd = rawColumn < lineText.length
-        ? new vscode.Position(zeroBasedLine, rawColumn + 1)
+        ? new vscode.Position(targetLine, rawColumn + 1)
         : columnStart;
       columnRange = new vscode.Range(columnStart, columnEnd);
       editor.setDecorations(columnDecoration, [columnRange]);
@@ -655,7 +765,17 @@ function applyInlineErrorHighlight(stderr: string, filePath: string, editor: vsc
   }
 
   if (pointerDecoration) {
-    const anchorPosition = columnRange?.end ?? new vscode.Position(zeroBasedLine, lineText.length);
+    let anchorPosition: vscode.Position;
+    if (ignoreCaret) {
+      const firstNonWhitespace = Math.max(lineText.search(/\S/), 0);
+      anchorPosition = new vscode.Position(targetLine, firstNonWhitespace);
+      columnRange = undefined;
+      if (columnDecoration) {
+        editor.setDecorations(columnDecoration, []);
+      }
+    } else {
+      anchorPosition = columnRange?.end ?? new vscode.Position(targetLine, lineText.length);
+    }
     const pointerRange = new vscode.Range(anchorPosition, anchorPosition);
     const pointerData: vscode.DecorationOptions = {
       range: pointerRange,
@@ -685,8 +805,8 @@ function applyInlineErrorHighlight(stderr: string, filePath: string, editor: vsc
 
   return {
     line: relevantFrame.line,
-    column: rawColumn !== undefined ? rawColumn + 1 : undefined,
-    displayText: `Line ${relevantFrame.line}${rawColumn !== undefined ? `, column ${rawColumn + 1}` : ''}: ${lineText.trim() || '<empty>'}`,
+    column: columnRange ? columnRange.start.character + 1 : undefined,
+    displayText: `Line ${targetLine + 1}${columnRange ? `, column ${columnRange.start.character + 1}` : ''}: ${lineText.trim() || '<empty>'}`,
     pointerText: runtimeSummary
   };
 }
