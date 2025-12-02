@@ -289,46 +289,40 @@ function getHraWebviewHtml(state: WebviewState, mode: 'full' | 'baseline' = 'ful
     stage: nextStage
   });
 
-  // For baseline, always show only answer
-  if (mode === 'baseline') {
-    content = `<h3>How to fix it</h3><p>${escapeHtml(answer)}</p>`;
-    buttons = `<button class="btn primary" onclick="sendMessage('close')">Got it 👍</button>`;
-  } else {
-    // Generate content and buttons per stage
-    switch (stage) {
-      case 'initial':
-        content = escapeHtml(initialMessage) + (context && !isFirstOccurrence ? `<pre class="context">${escapeHtml(context)}</pre>` : '');
-        buttons = `
-          ${createButton("Yes, I am lost. Show me step-by-step please 😬", buildPayload("hint", { seenHint: true }), "primary")}
-          ${createButton("Hmmmm. Walk me through why this happened 🧭", buildPayload("reasoning", { seenReasoning: true }))}
-          ${createButton("I can do this! I do not need help right now 💪")}
-        `;
-        break;
-      case 'hint':
-        content = `<h3>What's happening</h3><p>${escapeHtml(hint)}</p>`;
-        buttons = `
-          ${createButton("Teach me why this happened 🧠", buildPayload("reasoning", { seenHint: true, seenReasoning: true }), "primary")}
-          ${createButton("Okay, I got it 👍")}
-        `;
-        break;
-      case 'reasoning': {
-        content = `<h3>Why it happens</h3><p>${escapeHtml(reasoning)}</p>`;
-        const fixButton = hasSeenHint ? createButton("Show me how to fix this type of error", buildPayload("answer"), "ghost") : '';
-        buttons = `
-          ${createButton("Back to \"What's happening\" 🔙", buildPayload("hint", { seenHint: true }))}
-          ${createButton("I'm ready to tackle this myself 💪", undefined, "primary")}
-          ${fixButton}
-        `;
-        break;
-      }
-      case 'answer':
-        content = `<h3>How to fix it</h3><p>${escapeHtml(answer)}</p>`;
-        buttons = `
-          ${createButton("Got it 👍")}
-          ${createButton("Explain how it works 🧠", buildPayload("reasoning", { seenHint: true, seenReasoning: true }))}
-        `;
-        break;
+  // Generate content and buttons per stage
+  switch (stage) {
+    case 'initial':
+      content = escapeHtml(initialMessage) + (context && !isFirstOccurrence ? `<pre class="context">${escapeHtml(context)}</pre>` : '');
+      buttons = `
+        ${createButton("Yes, I am lost. Show me step-by-step please 😬", buildPayload("hint", { seenHint: true }), "primary")}
+        ${createButton("Hmmmm. Walk me through why this happened 🧭", buildPayload("reasoning", { seenReasoning: true }))}
+        ${createButton("I can do this! I do not need help right now 💪")}
+      `;
+      break;
+    case 'hint':
+      content = `<h3>What's happening</h3><p>${escapeHtml(hint)}</p>`;
+      buttons = `
+        ${createButton("Teach me why this happened 🧠", buildPayload("reasoning", { seenHint: true, seenReasoning: true }), "primary")}
+        ${createButton("Okay, I got it 👍")}
+      `;
+      break;
+    case 'reasoning': {
+      content = `<h3>Why it happens</h3><p>${escapeHtml(reasoning)}</p>`;
+      const fixButton = hasSeenHint ? createButton("Show me how to fix this type of error", buildPayload("answer"), "ghost") : '';
+      buttons = `
+        ${createButton("Back to \"What's happening\" 🔙", buildPayload("hint", { seenHint: true }))}
+        ${createButton("I'm ready to tackle this myself 💪", undefined, "primary")}
+        ${fixButton}
+      `;
+      break;
     }
+    case 'answer':
+      content = `<h3>How to fix it</h3><p>${escapeHtml(answer)}</p>`;
+      buttons = `
+        ${createButton("Got it 👍")}
+        ${createButton("Explain how it works 🧠", buildPayload("reasoning", { seenHint: true, seenReasoning: true }))}
+      `;
+      break;
   }
 
   return `
@@ -1089,7 +1083,7 @@ export async function runCodeWithIra(filePath: string, language: string, mode: '
 
 // ---------------------- EXTENSION ACTIVATION ----------------------
 export function activate(context: vscode.ExtensionContext) {
-  const modeEnv = process.env.IRA_MODE || 'baseline'; // default to baseline
+  const modeEnv = 'full'; // 'baseline' or 'full'
   const mode: 'full' | 'baseline' = modeEnv as 'full' | 'baseline';
 
   // Register the "Run with Ira" command
