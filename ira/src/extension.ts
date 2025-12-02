@@ -466,14 +466,14 @@ export function createHraWebview(
         const nextStage = message.data.stage as WebviewState['stage'];
         console.log("[IRA] nextStage triggered:", nextStage);
 
-        // Re-render UI (preserves your full HRA styling)
+        // Re-render UI (preserves the full HRA styling)
         panel.webview.html = getHraWebviewHtml({
           ...message.data,
           stage: nextStage,
           mode
         });
 
-        // Update local state — only flip flags to true, never back to false
+        // Update local state: only flip flags to true, never back to false
         if (nextStage === 'hint') {
           accessedState.hint = true;
         }
@@ -1083,7 +1083,7 @@ export async function runCodeWithIra(filePath: string, language: string, mode: '
 
 // ---------------------- EXTENSION ACTIVATION ----------------------
 export function activate(context: vscode.ExtensionContext) {
-  const modeEnv = 'full'; // 'baseline' or 'full'
+  const modeEnv = 'baseline'; // 'baseline' or 'full'
   const mode: 'full' | 'baseline' = modeEnv as 'full' | 'baseline';
 
   // Register the "Run with Ira" command
