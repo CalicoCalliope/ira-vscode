@@ -36,6 +36,7 @@ interface WebviewState {
   reasoning?: string;
   answer?: string; // content used for "Fix" display
   context?: string;
+  focusMessage?: string;
   initialMessage?: string;
   seenHint?: boolean;
   seenReasoning?: boolean;
@@ -54,18 +55,24 @@ interface HighlightMetadata {
   column?: number;
   displayText: string;
   pointerText: string;
+  isSyntaxError: boolean;
 }
 
 const diagnosticCollection = vscode.languages.createDiagnosticCollection('ira');
 let errorLineDecoration: vscode.TextEditorDecorationType | undefined;
 let errorColumnDecoration: vscode.TextEditorDecorationType | undefined;
 let errorPointerDecoration: vscode.TextEditorDecorationType | undefined;
-let terminalMirrorPanel: vscode.WebviewPanel | undefined;
+let syntaxBannerDecoration: vscode.TextEditorDecorationType | undefined;
+let iraGuidancePanel: vscode.WebviewPanel | undefined;
+let iraGuidanceMessageListener: vscode.Disposable | undefined;
+let analysisStatusItem: vscode.StatusBarItem | undefined;
 let lastHighlightState: {
   uri: vscode.Uri;
   lineRange: vscode.Range;
   columnRange?: vscode.Range;
   pointerOption?: vscode.DecorationOptions;
+  syntaxBannerRange?: vscode.Range;
+  syntaxBannerMessage?: string;
 } | null = null;
 let activeHighlightDocumentVersion: number | null = null;
 
@@ -112,6 +119,24 @@ const SEEN_BEFORE_MESSAGES: string[] = [
 function friendlyIntro(isFirst: boolean): string {
   const arr = isFirst ? FIRST_TIME_MESSAGES : SEEN_BEFORE_MESSAGES;
   return arr[Math.floor(Math.random() * arr.length)];
+}
+
+function showAnalysisStatus(message: string): vscode.Disposable {
+  if (!analysisStatusItem) {
+    analysisStatusItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 99);
+    analysisStatusItem.color = '#16a34a';
+  }
+  analysisStatusItem.text = message;
+  analysisStatusItem.tooltip = 'IRA is running your code';
+  analysisStatusItem.show();
+  return { dispose: () => analysisStatusItem?.hide() };
+}
+
+function disposeGuidanceMessageListener() {
+  if (iraGuidanceMessageListener) {
+    iraGuidanceMessageListener.dispose();
+    iraGuidanceMessageListener = undefined;
+  }
 }
 
 // ---------------------- HELPER FUNCTIONS ----------------------
@@ -240,6 +265,7 @@ function getHraWebviewHtml(state: WebviewState, mode: 'full' | 'baseline' = 'ful
     reasoning,
     answer,
     context,
+    focusMessage,
     initialMessage,
     seenHint = false,
     seenReasoning = false
@@ -278,6 +304,7 @@ function getHraWebviewHtml(state: WebviewState, mode: 'full' | 'baseline' = 'ful
     reasoning,
     answer,
     context,
+    focusMessage,
     initialMessage,
     seenHint: hasSeenHint,
     seenReasoning: hasSeenReasoning
@@ -289,40 +316,46 @@ function getHraWebviewHtml(state: WebviewState, mode: 'full' | 'baseline' = 'ful
     stage: nextStage
   });
 
-  // Generate content and buttons per stage
-  switch (stage) {
-    case 'initial':
-      content = escapeHtml(initialMessage) + (context && !isFirstOccurrence ? `<pre class="context">${escapeHtml(context)}</pre>` : '');
-      buttons = `
-        ${createButton("Yes, I am lost. Show me step-by-step please 😬", buildPayload("hint", { seenHint: true }), "primary")}
-        ${createButton("Hmmmm. Walk me through why this happened 🧭", buildPayload("reasoning", { seenReasoning: true }))}
-        ${createButton("I can do this! I do not need help right now 💪")}
-      `;
-      break;
-    case 'hint':
-      content = `<h3>What's happening</h3><p>${escapeHtml(hint)}</p>`;
-      buttons = `
-        ${createButton("Teach me why this happened 🧠", buildPayload("reasoning", { seenHint: true, seenReasoning: true }), "primary")}
-        ${createButton("Okay, I got it 👍")}
-      `;
-      break;
-    case 'reasoning': {
-      content = `<h3>Why it happens</h3><p>${escapeHtml(reasoning)}</p>`;
-      const fixButton = hasSeenHint ? createButton("Show me how to fix this type of error", buildPayload("answer"), "ghost") : '';
-      buttons = `
-        ${createButton("Back to \"What's happening\" 🔙", buildPayload("hint", { seenHint: true }))}
-        ${createButton("I'm ready to tackle this myself 💪", undefined, "primary")}
-        ${fixButton}
-      `;
-      break;
+  if (mode === 'baseline') {
+    content = `<h3>How to fix it</h3><p>${escapeHtml(answer)}</p>`;
+    buttons = `<button class="btn primary" onclick="sendMessage('close')">Got it 👍</button>`;
+  } else {
+    switch (stage) {
+      case 'initial': {
+        const contextBlock = context && !isFirstOccurrence ? `<pre class="context">${escapeHtml(context)}</pre>` : '';
+        content = escapeHtml(initialMessage) + contextBlock;
+        buttons = `
+          ${createButton("Yes, I am lost. Show me step-by-step please 😬", buildPayload("hint", { seenHint: true }), "primary")}
+          ${createButton("Hmmmm. Walk me through why this happened 🧭", buildPayload("reasoning", { seenReasoning: true }))}
+          ${createButton("I can do this! I do not need help right now 💪")}
+        `;
+        break;
+      }
+      case 'hint':
+        content = `<h3>What's happening</h3><p>${escapeHtml(hint)}</p>`;
+        buttons = `
+          ${createButton("Teach me why this happened 🧠", buildPayload("reasoning", { seenHint: true, seenReasoning: true }), "primary")}
+          ${createButton("Okay, I got it 👍")}
+        `;
+        break;
+      case 'reasoning': {
+        content = `<h3>Why it happens</h3><p>${escapeHtml(reasoning)}</p>`;
+        const fixButton = hasSeenHint ? createButton("Show me how to fix this type of error", buildPayload("answer"), "ghost") : '';
+        buttons = `
+          ${createButton("Back to \"What's happening\" 🔙", buildPayload("hint", { seenHint: true }))}
+          ${createButton("I'm ready to tackle this myself 💪", undefined, "primary")}
+          ${fixButton}
+        `;
+        break;
+      }
+      case 'answer':
+        content = `<h3>How to fix it</h3><p>${escapeHtml(answer)}</p>`;
+        buttons = `
+          ${createButton("Got it 👍")}
+          ${createButton("Explain how it works 🧠", buildPayload("reasoning", { seenHint: true, seenReasoning: true }))}
+        `;
+        break;
     }
-    case 'answer':
-      content = `<h3>How to fix it</h3><p>${escapeHtml(answer)}</p>`;
-      buttons = `
-        ${createButton("Got it 👍")}
-        ${createButton("Explain how it works 🧠", buildPayload("reasoning", { seenHint: true, seenReasoning: true }))}
-      `;
-      break;
   }
 
   return `
@@ -353,6 +386,7 @@ function getHraWebviewHtml(state: WebviewState, mode: 'full' | 'baseline' = 'ful
         * { box-sizing: border-box; }
         body { margin: 0; padding: 16px; background: var(--bg); color: var(--fg); font: 13px/1.45 -apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Helvetica,Arial; }
         .card { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 16px; box-shadow: 0 6px 18px rgba(0,0,0,.2); }
+        .focus-pill { margin-bottom: 12px; padding: 10px 12px; border-radius: 10px; border: 1px solid rgba(22,163,74,0.5); background: rgba(22,163,74,0.18); font-weight: 600; color: #dcfce7; }
         h3 { margin: 0 0 8px; font-size: 14px; }
         p { margin: 0; white-space: pre-wrap; }
         .context { background: var(--input-bg); border: 1px solid var(--border); padding: 10px; border-radius: 8px; overflow: auto; max-height: 220px; margin-top: 8px; }
@@ -367,6 +401,7 @@ function getHraWebviewHtml(state: WebviewState, mode: 'full' | 'baseline' = 'ful
     </head>
     <body>
       <div class="card">
+        ${focusMessage ? `<div class="focus-pill">Focus on ${escapeHtml(focusMessage)}</div>` : ''}
         <div class="content">${content}</div>
         <div class="actions">${buttons}</div>
       </div>
@@ -418,15 +453,30 @@ export function createHraWebview(
   reasoning?: string,
   answer?: string,
   context?: string,
+  focusMessage?: string,
   pemId?: string,
   mode: 'full' | 'baseline' = 'full'
 ) {
-  const panel = vscode.window.createWebviewPanel(
-    'hraPanel',
-    title,
-    vscode.ViewColumn.Beside,
-    { enableScripts: true }
-  );
+  if (!iraGuidancePanel) {
+    iraGuidancePanel = vscode.window.createWebviewPanel(
+      'hraPanel',
+      title,
+      vscode.ViewColumn.Beside,
+      { enableScripts: true }
+    );
+    iraGuidancePanel.onDidDispose(() => {
+      iraGuidancePanel = undefined;
+      disposeGuidanceMessageListener();
+    });
+  } else {
+    iraGuidancePanel.title = title;
+    iraGuidancePanel.reveal(vscode.ViewColumn.Beside);
+  }
+
+  const panel = iraGuidancePanel;
+  if (!panel) {
+    return;
+  }
 
   const initialMessage = friendlyIntro(isFirstOccurrence);
 
@@ -438,6 +488,7 @@ export function createHraWebview(
     reasoning,
     answer,
     context,
+    focusMessage,
     initialMessage
   },
   mode);
@@ -458,7 +509,8 @@ export function createHraWebview(
   })();
 
   // Handle button clicks from webview
-  panel.webview.onDidReceiveMessage(async (message) => {
+  disposeGuidanceMessageListener();
+  iraGuidanceMessageListener = panel.webview.onDidReceiveMessage(async (message) => {
     console.log("[IRA] Message received from Webview:", message);
 
     switch (message.command) {
@@ -589,6 +641,34 @@ function findLikelySyntaxOrigin(
   return findUnclosedBracketPosition(document, errorLine, prefer);
 }
 
+function applySyntaxBanner(
+  editor: vscode.TextEditor,
+  range: vscode.Range | undefined,
+  message: string | undefined
+) {
+  if (!syntaxBannerDecoration) {
+    return;
+  }
+  if (!range || !message) {
+    editor.setDecorations(syntaxBannerDecoration, []);
+    return;
+  }
+  editor.setDecorations(syntaxBannerDecoration, [
+    {
+      range,
+      renderOptions: {
+        after: {
+          contentText: ` ${message}`,
+          color: '#14532d',
+          backgroundColor: 'rgba(22, 163, 74, 0.18)',
+          margin: '0 0 0 8px',
+          fontWeight: '600'
+        }
+      }
+    }
+  ]);
+}
+
 function extractRuntimeError(stderr: string): string | null {
   const lines = stderr.split(/\r?\n/);
 
@@ -682,6 +762,7 @@ function clearVisualErrorIndicators() {
   const lineDecoration = errorLineDecoration;
   const columnDecoration = errorColumnDecoration;
   const pointerDecoration = errorPointerDecoration;
+  const bannerDecoration = syntaxBannerDecoration;
 
   vscode.window.visibleTextEditors.forEach((activeEditor) => {
     if (lineDecoration) {
@@ -692,6 +773,9 @@ function clearVisualErrorIndicators() {
     }
     if (pointerDecoration) {
       activeEditor.setDecorations(pointerDecoration, []);
+    }
+    if (bannerDecoration) {
+      activeEditor.setDecorations(bannerDecoration, []);
     }
   });
 }
@@ -710,25 +794,35 @@ function applyInlineErrorHighlight(stderr: string, filePath: string, editor: vsc
     return null;
   }
 
-  let targetLine = Math.max(relevantFrame.line - 1, 0);
-  if (targetLine >= editor.document.lineCount) {
-    return null;
-  }
+  let resolvedLineNumber = relevantFrame.line;
+  let resolvedColumnNumber = typeof relevantFrame.column === 'number' ? relevantFrame.column : undefined;
 
-  const ignoreCaret = shouldIgnoreCaret(relevantFrame.errorMessage);
-  if (ignoreCaret) {
-    const origin = findLikelySyntaxOrigin(editor.document, targetLine, relevantFrame.errorMessage);
-    if (origin) {
-      targetLine = origin.line;
+  const runtimeSummary = extractRuntimeError(stderr) ?? 'Runtime error';
+  const isSyntaxError = /SyntaxError/i.test(relevantFrame.errorMessage ?? '') || /SyntaxError/i.test(runtimeSummary);
+
+  if (isSyntaxError) {
+    const caretMissing = resolvedColumnNumber === undefined || shouldIgnoreCaret(relevantFrame.errorMessage);
+    if (caretMissing) {
+      const fallback = findLikelySyntaxOrigin(editor.document, resolvedLineNumber - 1, relevantFrame.errorMessage);
+      if (fallback) {
+        const fallbackLineNumber = fallback.line + 1;
+        if (fallbackLineNumber <= resolvedLineNumber) {
+          resolvedLineNumber = fallbackLineNumber;
+          resolvedColumnNumber = fallback.column;
+        }
+      }
     }
   }
 
-  const lineText = editor.document.lineAt(targetLine).text;
-  const lineRange = new vscode.Range(targetLine, 0, targetLine, lineText.length);
-  const runtimeSummary = extractRuntimeError(stderr) ?? 'Runtime error';
-  const diagnostic = new vscode.Diagnostic(lineRange, runtimeSummary, vscode.DiagnosticSeverity.Error);
-  diagnostic.source = 'IRA';
+  const actualLine = Math.max(resolvedLineNumber - 1, 0);
+  if (actualLine >= editor.document.lineCount) {
+    return null;
+  }
 
+  const actualLineText = editor.document.lineAt(actualLine).text;
+  const diagnosticRange = new vscode.Range(actualLine, 0, actualLine, actualLineText.length);
+  const diagnostic = new vscode.Diagnostic(diagnosticRange, runtimeSummary, vscode.DiagnosticSeverity.Error);
+  diagnostic.source = 'IRA';
   diagnosticCollection.set(editor.document.uri, [diagnostic]);
 
   const lineDecoration = errorLineDecoration;
@@ -736,248 +830,82 @@ function applyInlineErrorHighlight(stderr: string, filePath: string, editor: vsc
   const pointerDecoration = errorPointerDecoration;
   let pointerOption: vscode.DecorationOptions | undefined;
   let columnRange: vscode.Range | undefined;
-
-  if (lineDecoration) {
-    editor.setDecorations(lineDecoration, [lineRange]);
-  }
-
-  const rawColumn = !ignoreCaret && typeof relevantFrame.column === 'number' && relevantFrame.column >= 0
-    ? Math.min(relevantFrame.column, lineText.length)
-    : undefined;
-
-  if (columnDecoration) {
-    if (rawColumn !== undefined) {
-      const columnStart = new vscode.Position(targetLine, rawColumn);
-      const columnEnd = rawColumn < lineText.length
-        ? new vscode.Position(targetLine, rawColumn + 1)
-        : columnStart;
-      columnRange = new vscode.Range(columnStart, columnEnd);
-      editor.setDecorations(columnDecoration, [columnRange]);
-    } else {
+  let syntaxBannerRange: vscode.Range | undefined;
+  let highlightRange = diagnosticRange;
+  if (isSyntaxError) {
+    const bannerLine = Math.min(actualLine + 1, editor.document.lineCount - 1);
+    const bannerText = editor.document.lineAt(bannerLine).text;
+    highlightRange = new vscode.Range(bannerLine, 0, bannerLine, bannerText.length);
+    syntaxBannerRange = highlightRange;
+    applySyntaxBanner(editor, syntaxBannerRange, relevantFrame.errorMessage ?? runtimeSummary);
+    if (columnDecoration) {
       editor.setDecorations(columnDecoration, []);
     }
-  }
+    if (pointerDecoration) {
+      editor.setDecorations(pointerDecoration, []);
+    }
+  } else {
+    applySyntaxBanner(editor, undefined, undefined);
+    const rawColumn = typeof resolvedColumnNumber === 'number' && resolvedColumnNumber >= 0
+      ? Math.min(resolvedColumnNumber, actualLineText.length)
+      : undefined;
 
-  if (pointerDecoration) {
-    let anchorPosition: vscode.Position;
-    if (ignoreCaret) {
-      const firstNonWhitespace = Math.max(lineText.search(/\S/), 0);
-      anchorPosition = new vscode.Position(targetLine, firstNonWhitespace);
-      columnRange = undefined;
-      if (columnDecoration) {
+    if (columnDecoration) {
+      if (rawColumn !== undefined) {
+        const columnStart = new vscode.Position(actualLine, rawColumn);
+        const columnEnd = rawColumn < actualLineText.length
+          ? new vscode.Position(actualLine, rawColumn + 1)
+          : columnStart;
+        columnRange = new vscode.Range(columnStart, columnEnd);
+        editor.setDecorations(columnDecoration, [columnRange]);
+      } else {
         editor.setDecorations(columnDecoration, []);
       }
-    } else {
-      anchorPosition = columnRange?.end ?? new vscode.Position(targetLine, lineText.length);
     }
-    const pointerRange = new vscode.Range(anchorPosition, anchorPosition);
-    const pointerData: vscode.DecorationOptions = {
-      range: pointerRange,
-      renderOptions: {
-        after: {
-          contentText: ` ← ${runtimeSummary}`,
-          color: '#16a34a',
-          backgroundColor: 'rgba(22, 163, 74, 0.15)',
-          margin: '0 0 0 8px',
-          fontWeight: '600',
-          textDecoration: 'none'
+
+    if (pointerDecoration) {
+      const anchorPosition = columnRange?.end ?? new vscode.Position(actualLine, actualLineText.length);
+      const pointerRange = new vscode.Range(anchorPosition, anchorPosition);
+      const pointerData: vscode.DecorationOptions = {
+        range: pointerRange,
+        renderOptions: {
+          after: {
+            contentText: ` ← ${runtimeSummary}`,
+            color: '#16a34a',
+            backgroundColor: 'rgba(22, 163, 74, 0.15)',
+            margin: '0 0 0 8px',
+            fontWeight: '600',
+            textDecoration: 'none'
+          }
         }
-      }
-    };
-    pointerOption = pointerData;
-    editor.setDecorations(pointerDecoration, [pointerData]);
+      };
+      pointerOption = pointerData;
+      editor.setDecorations(pointerDecoration, [pointerData]);
+    }
   }
 
-  editor.revealRange(lineRange, vscode.TextEditorRevealType.InCenterIfOutsideViewport);
+  if (lineDecoration) {
+    editor.setDecorations(lineDecoration, [highlightRange]);
+  }
+
+  editor.revealRange(highlightRange, vscode.TextEditorRevealType.InCenterIfOutsideViewport);
   lastHighlightState = {
     uri: editor.document.uri,
-    lineRange,
+    lineRange: highlightRange,
     columnRange,
-    pointerOption
+    pointerOption,
+    syntaxBannerRange,
+    syntaxBannerMessage: syntaxBannerRange ? relevantFrame.errorMessage ?? runtimeSummary : undefined
   };
   activeHighlightDocumentVersion = editor.document.version;
 
   return {
-    line: relevantFrame.line,
+    line: resolvedLineNumber,
     column: columnRange ? columnRange.start.character + 1 : undefined,
-    displayText: `Line ${targetLine + 1}${columnRange ? `, column ${columnRange.start.character + 1}` : ''}: ${lineText.trim() || '<empty>'}`,
-    pointerText: runtimeSummary
+    displayText: `Line ${resolvedLineNumber}: ${actualLineText.trim() || '<empty>'}`,
+    pointerText: runtimeSummary,
+    isSyntaxError
   };
-}
-
-function stripAnsiCodes(value: string): string {
-  return value.replace(/\x1b\[[0-9;]*m/g, '');
-}
-
-function escapeTerminalHtml(value: string): string {
-  return value
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;');
-}
-
-function getTerminalMirrorHtml(
-  lines: string[],
-  highlightIndices: Set<number>,
-  pointers: Map<number, string>,
-  focus?: HighlightMetadata
-): string {
-  const rendered = lines
-    .map((line, index) => {
-      const classes = highlightIndices.has(index) ? 'line highlight' : 'line';
-      const pointerText = pointers.get(index);
-      const pointerMarkup = pointerText ? `<span class="pointer">${escapeTerminalHtml(pointerText)}</span>` : '';
-      const content = line.length ? escapeTerminalHtml(line) : '&nbsp;';
-      return `<div class="${classes}" data-line="${index}"><span class="line-number">${index + 1}</span><span class="line-text">${content}</span>${pointerMarkup}</div>`;
-    })
-    .join('');
-
-  const focusMarkup = focus
-    ? `<div class="focus-hint">Focus on ${escapeTerminalHtml(focus.displayText)}</div>`
-    : '';
-
-  return `<!DOCTYPE html>
-  <html lang="en">
-    <head>
-      <meta charset="UTF-8">
-      <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline';">
-      <meta name="viewport" content="width=device-width, initial-scale=1" />
-      <title>IRA Terminal Mirror</title>
-      <style>
-        :root {
-          --fg: var(--vscode-foreground);
-          --bg: var(--vscode-editor-background);
-          --border: var(--vscode-panel-border);
-          --accent: #16a34a;
-          --highlight-bg: rgba(22, 163, 74, 0.12);
-        }
-        body {
-          margin: 0;
-          background: var(--bg);
-          color: var(--fg);
-          font: 12px/1.5 Menlo, Monaco, Consolas, "Courier New", monospace;
-        }
-        .wrapper {
-          padding: 16px;
-        }
-        .focus-hint {
-          margin-bottom: 12px;
-          padding: 8px 10px;
-          border-left: 3px solid var(--accent);
-          background: rgba(249, 115, 22, 0.08);
-          border-radius: 6px;
-        }
-        .terminal {
-          border: 1px solid var(--border);
-          border-radius: 8px;
-          overflow: auto;
-          max-height: 60vh;
-        }
-        .line {
-          display: flex;
-          gap: 12px;
-          padding: 4px 12px;
-        }
-        .line + .line {
-          border-top: 1px solid rgba(255,255,255,0.04);
-        }
-        .line.highlight {
-          background: var(--highlight-bg);
-          position: relative;
-        }
-        .line-number {
-          opacity: 0.4;
-          min-width: 32px;
-          text-align: right;
-        }
-        .pointer {
-          margin-left: auto;
-          color: var(--accent);
-          font-size: 11px;
-          font-weight: 600;
-          display: flex;
-          align-items: center;
-          gap: 4px;
-        }
-        .pointer::before {
-          content: "↳";
-        }
-      </style>
-    </head>
-    <body>
-      <div class="wrapper">
-        ${focusMarkup}
-        <div class="terminal">${rendered}</div>
-      </div>
-      <script>
-        const highlight = document.querySelector('.line.highlight');
-        if (highlight) {
-          highlight.scrollIntoView({ block: 'center', behavior: 'smooth' });
-        }
-      </script>
-    </body>
-  </html>`;
-}
-
-function showTerminalMirror(rawOutput: string, focus?: HighlightMetadata | null) {
-  const cleanedOutput = stripAnsiCodes(rawOutput);
-  const lines = cleanedOutput.split(/\r?\n/);
-
-  if (!lines.length || (lines.length === 1 && lines[0] === '')) {
-    lines.splice(0, lines.length, '<no stderr captured>');
-  }
-
-  const highlightIndices = new Set<number>();
-  const pointers = new Map<number, string>();
-
-  lines.forEach((line, index) => {
-    if (/Traceback/i.test(line) || /Error:/i.test(line) || /Exception:/i.test(line)) {
-      highlightIndices.add(index);
-    }
-    if (/File ".*", line \d+/.test(line)) {
-      highlightIndices.add(index);
-    }
-  });
-
-  if (focus) {
-    const pointerIndex = lines.findIndex((line) => line.includes(`line ${focus.line}`));
-    if (pointerIndex >= 0) {
-      highlightIndices.add(pointerIndex);
-      const pointerLabel = focus.pointerText || `Matches ${focus.displayText}`;
-      pointers.set(pointerIndex, pointerLabel);
-    }
-  }
-
-  if (highlightIndices.size === 0 && lines.length) {
-    highlightIndices.add(lines.length - 1);
-  }
-
-  let panel = terminalMirrorPanel;
-  if (!panel) {
-    panel = vscode.window.createWebviewPanel(
-      'iraTerminalMirror',
-      'IRA Terminal Mirror',
-      vscode.ViewColumn.Beside,
-      { enableScripts: true }
-    );
-    panel.onDidDispose(() => {
-      terminalMirrorPanel = undefined;
-    });
-    terminalMirrorPanel = panel;
-  } else {
-    panel.reveal(vscode.ViewColumn.Beside);
-  }
-
-  panel.webview.html = getTerminalMirrorHtml(lines, highlightIndices, pointers, focus ?? undefined);
-}
-
-function hideTerminalMirror() {
-  if (terminalMirrorPanel) {
-    terminalMirrorPanel.dispose();
-    terminalMirrorPanel = undefined;
-  }
 }
 
 // ---------------------- RUN WITH IRA ----------------------
@@ -1008,13 +936,16 @@ export async function runCodeWithIra(filePath: string, language: string, mode: '
   }
 
   clearVisualErrorIndicators();
-  hideTerminalMirror();
 
   const py = await resolvePythonCmd();
 
   const code = editor.document.getText();
+  const runningIndicator = showAnalysisStatus('$(sync~spin) IRA is analyzing this run...');
 
   exec(`${py} "${filePath}"`, async (error, stdout, stderr) => {
+    const cleanup = () => {
+      runningIndicator.dispose();
+    };
     if (stdout){
       console.log(`[stdout]: ${stdout}`);
     }
@@ -1022,15 +953,11 @@ export async function runCodeWithIra(filePath: string, language: string, mode: '
     const normalizedStderr = stderr ?? '';
     const effectiveStderr = normalizedStderr.trim().length ? normalizedStderr : (error ? `${error.message}` : '');
     if (!effectiveStderr.trim()) {
+      cleanup();
       return;
     }
 
     const highlightInfo = applyInlineErrorHighlight(effectiveStderr, filePath, editor);
-    if (highlightInfo) {
-      hideTerminalMirror();
-    } else {
-      showTerminalMirror(effectiveStderr, null);
-    }
 
     const pem = `[RUNTIME ERROR] ${effectiveStderr}`;
     const pemType = extractPemType(effectiveStderr);
@@ -1060,8 +987,10 @@ export async function runCodeWithIra(filePath: string, language: string, mode: '
     const patchedCode = extractPatchedCode(coordinatorResponse.answer) ?? '';
 
     const combinedContext = highlightInfo
-      ? [highlightInfo.displayText, highlightInfo.pointerText, coordinatorResponse.context].filter(Boolean).join('\n\n')
+      ? [highlightInfo.pointerText, coordinatorResponse.context].filter(Boolean).join('\n\n')
       : coordinatorResponse.context;
+
+    const focusMessage = highlightInfo && !highlightInfo.isSyntaxError ? highlightInfo.displayText : undefined;
 
     createHraWebview(
       'IRA Guidance',
@@ -1070,6 +999,7 @@ export async function runCodeWithIra(filePath: string, language: string, mode: '
       coordinatorResponse.reasoning,
       patchedCode,
       combinedContext,
+      focusMessage,
       pemLogEntry.id,
       mode
     );
@@ -1078,6 +1008,7 @@ export async function runCodeWithIra(filePath: string, language: string, mode: '
       ? ` on line ${highlightInfo.line}${highlightInfo.column ? `, column ${highlightInfo.column}` : ''}`
       : '';
     vscode.window.showErrorMessage(`Runtime error (${pemType})${lineHint}. HRA panel opened.`);
+    cleanup();
   });
 }
 
@@ -1122,6 +1053,12 @@ export function activate(context: vscode.ExtensionContext) {
   runButton.show();
 
   context.subscriptions.push(runButton);
+  if (!analysisStatusItem) {
+    analysisStatusItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 99);
+    analysisStatusItem.color = '#16a34a';
+    analysisStatusItem.hide();
+  }
+  context.subscriptions.push(analysisStatusItem);
   context.subscriptions.push(diagnosticCollection);
 
   if (!errorLineDecoration) {
@@ -1159,6 +1096,12 @@ export function activate(context: vscode.ExtensionContext) {
     errorPointerDecoration = vscode.window.createTextEditorDecorationType({});
   }
 
+  if (!syntaxBannerDecoration) {
+    syntaxBannerDecoration = vscode.window.createTextEditorDecorationType({
+      isWholeLine: true
+    });
+  }
+
   if (errorLineDecoration) {
     context.subscriptions.push(errorLineDecoration);
   }
@@ -1171,11 +1114,16 @@ export function activate(context: vscode.ExtensionContext) {
     context.subscriptions.push(errorPointerDecoration);
   }
 
+  if (syntaxBannerDecoration) {
+    context.subscriptions.push(syntaxBannerDecoration);
+  }
+
   context.subscriptions.push(
     vscode.window.onDidChangeActiveTextEditor((activeEditor) => {
       const lineDecoration = errorLineDecoration;
       const columnDecoration = errorColumnDecoration;
       const pointerDecoration = errorPointerDecoration;
+      const bannerDecoration = syntaxBannerDecoration;
       const state = lastHighlightState;
       if (!activeEditor || !state) {
         return;
@@ -1197,6 +1145,13 @@ export function activate(context: vscode.ExtensionContext) {
       if (pointerDecoration) {
         const pointerData = state.pointerOption ? [state.pointerOption] : [];
         activeEditor.setDecorations(pointerDecoration, pointerData);
+      }
+      if (bannerDecoration) {
+        if (state.syntaxBannerRange && state.syntaxBannerMessage) {
+          applySyntaxBanner(activeEditor, state.syntaxBannerRange, state.syntaxBannerMessage);
+        } else {
+          activeEditor.setDecorations(bannerDecoration, []);
+        }
       }
     })
   );
@@ -1222,5 +1177,4 @@ export function activate(context: vscode.ExtensionContext) {
 
 export function deactivate() {
   clearVisualErrorIndicators();
-  hideTerminalMirror();
 }
