@@ -36,6 +36,7 @@ interface WebviewState {
   reasoning?: string;
   answer?: string; // content used for "Fix" display
   context?: string;
+  focusLabel?: string;
   focusMessage?: string;
   initialMessage?: string;
   seenHint?: boolean;
@@ -61,8 +62,6 @@ interface HighlightMetadata {
 const diagnosticCollection = vscode.languages.createDiagnosticCollection('ira');
 let errorLineDecoration: vscode.TextEditorDecorationType | undefined;
 let errorColumnDecoration: vscode.TextEditorDecorationType | undefined;
-let errorPointerDecoration: vscode.TextEditorDecorationType | undefined;
-let syntaxBannerDecoration: vscode.TextEditorDecorationType | undefined;
 let iraGuidancePanel: vscode.WebviewPanel | undefined;
 let iraGuidanceMessageListener: vscode.Disposable | undefined;
 let analysisStatusItem: vscode.StatusBarItem | undefined;
@@ -70,9 +69,6 @@ let lastHighlightState: {
   uri: vscode.Uri;
   lineRange: vscode.Range;
   columnRange?: vscode.Range;
-  pointerOption?: vscode.DecorationOptions;
-  syntaxBannerRange?: vscode.Range;
-  syntaxBannerMessage?: string;
 } | null = null;
 let activeHighlightDocumentVersion: number | null = null;
 
@@ -265,6 +261,7 @@ function getHraWebviewHtml(state: WebviewState, mode: 'full' | 'baseline' = 'ful
     reasoning,
     answer,
     context,
+    focusLabel,
     focusMessage,
     initialMessage,
     seenHint = false,
@@ -304,6 +301,7 @@ function getHraWebviewHtml(state: WebviewState, mode: 'full' | 'baseline' = 'ful
     reasoning,
     answer,
     context,
+    focusLabel,
     focusMessage,
     initialMessage,
     seenHint: hasSeenHint,
@@ -396,7 +394,15 @@ function getHraWebviewHtml(state: WebviewState, mode: 'full' | 'baseline' = 'ful
     </head>
     <body>
       <div class="card">
-        ${focusMessage ? `<div class="focus-pill">Focus on ${escapeHtml(focusMessage)}</div>` : ''}
+        ${
+          focusMessage
+            ? (() => {
+                const label = focusLabel !== undefined ? focusLabel : 'Focus on';
+                const prefix = label ? `${escapeHtml(label)} ` : '';
+                return `<div class="focus-pill">${prefix}${escapeHtml(focusMessage)}</div>`;
+              })()
+            : ''
+        }
         <div class="content">${content}</div>
         <div class="actions">${buttons}</div>
       </div>
@@ -449,6 +455,7 @@ export function createHraWebview(
   answer?: string,
   context?: string,
   focusMessage?: string,
+  focusLabel?: string,
   pemId?: string,
   mode: 'full' | 'baseline' = 'full'
 ) {
@@ -483,6 +490,7 @@ export function createHraWebview(
     reasoning,
     answer,
     context,
+    focusLabel,
     focusMessage,
     initialMessage
   },
@@ -636,34 +644,6 @@ function findLikelySyntaxOrigin(
   return findUnclosedBracketPosition(document, errorLine, prefer);
 }
 
-function applySyntaxBanner(
-  editor: vscode.TextEditor,
-  range: vscode.Range | undefined,
-  message: string | undefined
-) {
-  if (!syntaxBannerDecoration) {
-    return;
-  }
-  if (!range || !message) {
-    editor.setDecorations(syntaxBannerDecoration, []);
-    return;
-  }
-  editor.setDecorations(syntaxBannerDecoration, [
-    {
-      range,
-      renderOptions: {
-        after: {
-          contentText: ` ${message}`,
-          color: '#14532d',
-          backgroundColor: 'rgba(22, 163, 74, 0.18)',
-          margin: '0 0 0 8px',
-          fontWeight: '600'
-        }
-      }
-    }
-  ]);
-}
-
 function extractRuntimeError(stderr: string): string | null {
   const lines = stderr.split(/\r?\n/);
 
@@ -756,8 +736,6 @@ function clearVisualErrorIndicators() {
 
   const lineDecoration = errorLineDecoration;
   const columnDecoration = errorColumnDecoration;
-  const pointerDecoration = errorPointerDecoration;
-  const bannerDecoration = syntaxBannerDecoration;
 
   vscode.window.visibleTextEditors.forEach((activeEditor) => {
     if (lineDecoration) {
@@ -766,12 +744,7 @@ function clearVisualErrorIndicators() {
     if (columnDecoration) {
       activeEditor.setDecorations(columnDecoration, []);
     }
-    if (pointerDecoration) {
-      activeEditor.setDecorations(pointerDecoration, []);
-    }
-    if (bannerDecoration) {
-      activeEditor.setDecorations(bannerDecoration, []);
-    }
+    // no trailing banner to clear
   });
 }
 
@@ -794,6 +767,7 @@ function applyInlineErrorHighlight(stderr: string, filePath: string, editor: vsc
 
   const runtimeSummary = extractRuntimeError(stderr) ?? 'Runtime error';
   const isSyntaxError = /SyntaxError/i.test(relevantFrame.errorMessage ?? '') || /SyntaxError/i.test(runtimeSummary);
+  const pointerLabel = isSyntaxError ? 'Syntax error' : runtimeSummary;
 
   if (isSyntaxError) {
     const caretMissing = resolvedColumnNumber === undefined || shouldIgnoreCaret(relevantFrame.errorMessage);
@@ -815,6 +789,17 @@ function applyInlineErrorHighlight(stderr: string, filePath: string, editor: vsc
   }
 
   const actualLineText = editor.document.lineAt(actualLine).text;
+
+  if (isSyntaxError) {
+    return {
+      line: resolvedLineNumber,
+      column: undefined,
+      displayText: 'Syntax error',
+      pointerText: pointerLabel,
+      isSyntaxError
+    };
+  }
+
   const diagnosticRange = new vscode.Range(actualLine, 0, actualLine, actualLineText.length);
   const diagnostic = new vscode.Diagnostic(diagnosticRange, runtimeSummary, vscode.DiagnosticSeverity.Error);
   diagnostic.source = 'IRA';
@@ -822,75 +807,34 @@ function applyInlineErrorHighlight(stderr: string, filePath: string, editor: vsc
 
   const lineDecoration = errorLineDecoration;
   const columnDecoration = errorColumnDecoration;
-  const pointerDecoration = errorPointerDecoration;
-  let pointerOption: vscode.DecorationOptions | undefined;
   let columnRange: vscode.Range | undefined;
-  let syntaxBannerRange: vscode.Range | undefined;
-  let highlightRange = diagnosticRange;
-  if (isSyntaxError) {
-    const bannerLine = Math.min(actualLine + 1, editor.document.lineCount - 1);
-    const bannerText = editor.document.lineAt(bannerLine).text;
-    highlightRange = new vscode.Range(bannerLine, 0, bannerLine, bannerText.length);
-    syntaxBannerRange = highlightRange;
-    applySyntaxBanner(editor, syntaxBannerRange, relevantFrame.errorMessage ?? runtimeSummary);
-    if (columnDecoration) {
+
+  const rawColumn = typeof resolvedColumnNumber === 'number' && resolvedColumnNumber >= 0
+    ? Math.min(resolvedColumnNumber, actualLineText.length)
+    : undefined;
+
+  if (columnDecoration) {
+    if (rawColumn !== undefined) {
+      const columnStart = new vscode.Position(actualLine, rawColumn);
+      const columnEnd = rawColumn < actualLineText.length
+        ? new vscode.Position(actualLine, rawColumn + 1)
+        : columnStart;
+      columnRange = new vscode.Range(columnStart, columnEnd);
+      editor.setDecorations(columnDecoration, [columnRange]);
+    } else {
       editor.setDecorations(columnDecoration, []);
-    }
-    if (pointerDecoration) {
-      editor.setDecorations(pointerDecoration, []);
-    }
-  } else {
-    applySyntaxBanner(editor, undefined, undefined);
-    const rawColumn = typeof resolvedColumnNumber === 'number' && resolvedColumnNumber >= 0
-      ? Math.min(resolvedColumnNumber, actualLineText.length)
-      : undefined;
-
-    if (columnDecoration) {
-      if (rawColumn !== undefined) {
-        const columnStart = new vscode.Position(actualLine, rawColumn);
-        const columnEnd = rawColumn < actualLineText.length
-          ? new vscode.Position(actualLine, rawColumn + 1)
-          : columnStart;
-        columnRange = new vscode.Range(columnStart, columnEnd);
-        editor.setDecorations(columnDecoration, [columnRange]);
-      } else {
-        editor.setDecorations(columnDecoration, []);
-      }
-    }
-
-    if (pointerDecoration) {
-      const anchorPosition = columnRange?.end ?? new vscode.Position(actualLine, actualLineText.length);
-      const pointerRange = new vscode.Range(anchorPosition, anchorPosition);
-      const pointerData: vscode.DecorationOptions = {
-        range: pointerRange,
-        renderOptions: {
-          after: {
-            contentText: ` ← ${runtimeSummary}`,
-            color: '#16a34a',
-            backgroundColor: 'rgba(22, 163, 74, 0.15)',
-            margin: '0 0 0 8px',
-            fontWeight: '600',
-            textDecoration: 'none'
-          }
-        }
-      };
-      pointerOption = pointerData;
-      editor.setDecorations(pointerDecoration, [pointerData]);
     }
   }
 
   if (lineDecoration) {
-    editor.setDecorations(lineDecoration, [highlightRange]);
+    editor.setDecorations(lineDecoration, [diagnosticRange]);
   }
 
-  editor.revealRange(highlightRange, vscode.TextEditorRevealType.InCenterIfOutsideViewport);
+  editor.revealRange(diagnosticRange, vscode.TextEditorRevealType.InCenterIfOutsideViewport);
   lastHighlightState = {
     uri: editor.document.uri,
-    lineRange: highlightRange,
-    columnRange,
-    pointerOption,
-    syntaxBannerRange,
-    syntaxBannerMessage: syntaxBannerRange ? relevantFrame.errorMessage ?? runtimeSummary : undefined
+    lineRange: diagnosticRange,
+    columnRange
   };
   activeHighlightDocumentVersion = editor.document.version;
 
@@ -898,7 +842,7 @@ function applyInlineErrorHighlight(stderr: string, filePath: string, editor: vsc
     line: resolvedLineNumber,
     column: columnRange ? columnRange.start.character + 1 : undefined,
     displayText: `Line ${resolvedLineNumber}: ${actualLineText.trim() || '<empty>'}`,
-    pointerText: runtimeSummary,
+    pointerText: pointerLabel,
     isSyntaxError
   };
 }
@@ -985,7 +929,12 @@ export async function runCodeWithIra(filePath: string, language: string, mode: '
       ? [highlightInfo.pointerText, coordinatorResponse.context].filter(Boolean).join('\n\n')
       : coordinatorResponse.context;
 
-    const focusMessage = highlightInfo && !highlightInfo.isSyntaxError ? highlightInfo.displayText : undefined;
+    const focusMessage = highlightInfo
+      ? (highlightInfo.isSyntaxError
+        ? `Check the terminal output for syntax details.`
+        : highlightInfo.displayText)
+      : undefined;
+    const focusLabelValue = highlightInfo && highlightInfo.isSyntaxError ? '' : undefined;
 
     createHraWebview(
       'IRA Guidance',
@@ -995,6 +944,7 @@ export async function runCodeWithIra(filePath: string, language: string, mode: '
       patchedCode,
       combinedContext,
       focusMessage,
+      focusLabelValue,
       pemLogEntry.id,
       mode
     );
@@ -1087,16 +1037,6 @@ export function activate(context: vscode.ExtensionContext) {
     });
   }
 
-  if (!errorPointerDecoration) {
-    errorPointerDecoration = vscode.window.createTextEditorDecorationType({});
-  }
-
-  if (!syntaxBannerDecoration) {
-    syntaxBannerDecoration = vscode.window.createTextEditorDecorationType({
-      isWholeLine: true
-    });
-  }
-
   if (errorLineDecoration) {
     context.subscriptions.push(errorLineDecoration);
   }
@@ -1105,20 +1045,10 @@ export function activate(context: vscode.ExtensionContext) {
     context.subscriptions.push(errorColumnDecoration);
   }
 
-  if (errorPointerDecoration) {
-    context.subscriptions.push(errorPointerDecoration);
-  }
-
-  if (syntaxBannerDecoration) {
-    context.subscriptions.push(syntaxBannerDecoration);
-  }
-
   context.subscriptions.push(
     vscode.window.onDidChangeActiveTextEditor((activeEditor) => {
       const lineDecoration = errorLineDecoration;
       const columnDecoration = errorColumnDecoration;
-      const pointerDecoration = errorPointerDecoration;
-      const bannerDecoration = syntaxBannerDecoration;
       const state = lastHighlightState;
       if (!activeEditor || !state) {
         return;
@@ -1137,17 +1067,6 @@ export function activate(context: vscode.ExtensionContext) {
         activeEditor.setDecorations(columnDecoration, columnData);
       }
 
-      if (pointerDecoration) {
-        const pointerData = state.pointerOption ? [state.pointerOption] : [];
-        activeEditor.setDecorations(pointerDecoration, pointerData);
-      }
-      if (bannerDecoration) {
-        if (state.syntaxBannerRange && state.syntaxBannerMessage) {
-          applySyntaxBanner(activeEditor, state.syntaxBannerRange, state.syntaxBannerMessage);
-        } else {
-          activeEditor.setDecorations(bannerDecoration, []);
-        }
-      }
     })
   );
 
