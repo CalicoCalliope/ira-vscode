@@ -30,7 +30,7 @@ export interface PemLogEntry {
 }
 
 interface WebviewState {
-  stage: 'initial' | 'hint' | 'reasoning' | 'answer';
+  stage: 'initial' | 'hint' | 'reasoning' | 'answer' | 'syntax';
   isFirstOccurrence: boolean;
   hint?: string;
   reasoning?: string;
@@ -351,6 +351,20 @@ function getHraWebviewHtml(state: WebviewState, mode: 'full' | 'baseline' = 'ful
         ${createButton("Explain how it works 🧠", buildPayload("reasoning", { seenHint: true, seenReasoning: true }))}
       `;
       break;
+      case 'syntax': {
+        content = `
+          <h3>You got this 💚</h3>
+          <p>
+            This is just a <strong>syntax error</strong>.<br><br>
+            Carefully read the error message and check the highlighted line;
+            you don’t need extra help here. 👍
+          </p>
+        `;
+        buttons = `
+          ${createButton("Alright, I’ll fix it 😄")}
+        `;
+        break;
+      }
   }
 
   return `
@@ -450,7 +464,8 @@ export function createHraWebview(
   context?: string,
   focusMessage?: string,
   pemId?: string,
-  mode: 'full' | 'baseline' = 'full'
+  mode: 'full' | 'baseline' = 'baseline',
+  isSyntaxError: boolean = false
 ) {
   if (!iraGuidancePanel) {
     iraGuidancePanel = vscode.window.createWebviewPanel(
@@ -471,6 +486,17 @@ export function createHraWebview(
   const panel = iraGuidancePanel;
   if (!panel) {
     return;
+  }
+
+  if (isSyntaxError) {
+    panel.webview.html = getHraWebviewHtml(
+      {
+        stage: 'syntax',
+        isFirstOccurrence
+      },
+      mode
+    );
+    return; // no listeners, no DB updates, no state
   }
 
   const initialMessage = friendlyIntro(isFirstOccurrence);
@@ -954,30 +980,52 @@ export async function runCodeWithIra(filePath: string, language: string, mode: '
 
     const highlightInfo = applyInlineErrorHighlight(effectiveStderr, filePath, editor);
 
+    if (highlightInfo?.isSyntaxError) {
+      createHraWebview(
+        'IRA Guidance',
+        false,                // isFirstOccurrence is irrelevant here
+        undefined,            // hint
+        undefined,            // reasoning
+        undefined,            // answer
+        undefined,            // context
+        undefined,            // focusMessage
+        undefined,            // pemId
+        mode,
+        true                  // isSyntaxError
+      );
+
+      vscode.window.showErrorMessage(
+        'Syntax error detected. Take a look at the highlighted line; you’ve got this 👍'
+      );
+
+      cleanup();
+      return; // DO NOT proceed to coordinator / logging
+    }
+
     const pem = `[RUNTIME ERROR] ${effectiveStderr}`;
     const pemType = extractPemType(effectiveStderr);
     const pemSkeleton = await getPemSkeletonFromPython(pem);
-      const envInfo = await getEnvInfo();
+    const envInfo = await getEnvInfo();
 
-      // Build log entry for coordinator
-      const pemLogEntry = {
-        id: uuidv4(),
-        timestamp: new Date().toISOString(),
-        pem,
-        pemType,
-        pemSkeleton,
-        code,
-        username: process.env.USER || process.env.USERNAME || vscode.env.machineId,
-        activeFile: filePath,
-        workingDirectory: vscode.workspace.workspaceFolders?.[0]?.uri.fsPath || '',
-        directoryTree: vscode.workspace.workspaceFolders?.map(f => f.uri.fsPath) || [],
-        pythonVersion: envInfo.pythonVersion,
-        packages: envInfo.packages,
-        isFirstOccurrence: false, // will be updated by coordinator
-        llm: {}
-      };
+    // Build log entry for coordinator
+    const pemLogEntry = {
+      id: uuidv4(),
+      timestamp: new Date().toISOString(),
+      pem,
+      pemType,
+      pemSkeleton,
+      code,
+      username: process.env.USER || process.env.USERNAME || vscode.env.machineId,
+      activeFile: filePath,
+      workingDirectory: vscode.workspace.workspaceFolders?.[0]?.uri.fsPath || '',
+      directoryTree: vscode.workspace.workspaceFolders?.map(f => f.uri.fsPath) || [],
+      pythonVersion: envInfo.pythonVersion,
+      packages: envInfo.packages,
+      isFirstOccurrence: false, // will be updated by coordinator
+      llm: {}
+    };
 
-      // Send to coordinator and get enriched response (HRA + firstOccurrence + context)
+    // Send to coordinator and get enriched response (HRA + firstOccurrence + context)
     const coordinatorResponse = await logPemToCoordinator(pemLogEntry, mode);
     const patchedCode = extractPatchedCode(coordinatorResponse.answer) ?? '';
 
