@@ -359,7 +359,7 @@ function getHraWebviewHtml(state: WebviewState, mode: 'full' | 'baseline' = 'ful
           </p>
         `;
         buttons = `
-          ${createButton("Alright, I’ll fix it 😄")}
+          ${createButton("Alright, I\u2019ll fix it fix it 😄")}
         `;
         break;
       }
@@ -503,7 +503,14 @@ export function createHraWebview(
       },
       mode
     );
-    return; // no listeners, no DB updates, no state
+
+    // Register listener for close
+    disposeGuidanceMessageListener();
+    iraGuidanceMessageListener = panel.webview.onDidReceiveMessage(message => {
+      if (message.command === 'close') panel.dispose();
+    });
+
+    return;
   }
 
   const initialMessage = friendlyIntro(isFirstOccurrence);
@@ -932,10 +939,11 @@ export async function runCodeWithIra(filePath: string, language: string, mode: '
         undefined,            // reasoning
         undefined,            // answer
         undefined,            // context
-        undefined,            // focusMessage
+        highlightInfo.displayText,            // focusMessage
+        undefined,            // focusLabel
         undefined,            // pemId
         mode,
-        true                  // isSyntaxError
+        true,               // isSyntaxError
       );
 
       vscode.window.showErrorMessage(
@@ -994,7 +1002,8 @@ export async function runCodeWithIra(filePath: string, language: string, mode: '
       focusMessage,
       focusLabelValue,
       pemLogEntry.id,
-      mode
+      mode,
+      false // isSyntaxError
     );
 
     const lineHint = highlightInfo
