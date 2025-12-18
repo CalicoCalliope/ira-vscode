@@ -343,7 +343,19 @@ function getHraWebviewHtml(state: WebviewState, mode: 'full' | 'baseline' = 'ful
       break;
     }
     case 'answer':
-      content = `<h3>How to fix it</h3><p>${escapeHtml(answer)}</p>`;
+      if (!isFirstOccurrence && mode === 'full') {
+        content = `
+          <h3>Remember this?</h3>
+          <pre class="context">${escapeHtml(answer)}</pre>
+          <p>
+            This is a previous code of yours, where you encountered this very same error! 
+            Remember how you handled it in the past? You got this! 💪
+          </p>
+        `;
+      }
+      else {
+        content = `<h3>How to fix it</h3><p>${escapeHtml(answer)}</p>`;
+      }
       buttons = `
         ${createButton("Got it 👍")}
         ${createButton("Explain how it works 🧠", buildPayload("reasoning", { seenHint: true, seenReasoning: true }))}
@@ -992,19 +1004,36 @@ export async function runCodeWithIra(filePath: string, language: string, mode: '
       : undefined;
     const focusLabelValue = highlightInfo && highlightInfo.isSyntaxError ? '' : undefined;
 
-    createHraWebview(
-      'IRA Guidance',
-      coordinatorResponse.isFirstOccurrence,
-      coordinatorResponse.hint,
-      coordinatorResponse.reasoning,
-      patchedCode,
-      combinedContext,
-      focusMessage,
-      focusLabelValue,
-      pemLogEntry.id,
-      mode,
-      false // isSyntaxError
-    );
+    if (!coordinatorResponse.isFirstOccurrence && mode === 'full') {
+      createHraWebview(
+        'IRA Guidance',
+        coordinatorResponse.isFirstOccurrence,
+        coordinatorResponse.hint,
+        coordinatorResponse.reasoning,
+        coordinatorResponse.code,
+        combinedContext,
+        focusMessage,
+        focusLabelValue,
+        pemLogEntry.id,
+        mode,
+        false // isSyntaxError
+      );
+    }
+    else {
+      createHraWebview(
+        'IRA Guidance',
+        coordinatorResponse.isFirstOccurrence,
+        coordinatorResponse.hint,
+        coordinatorResponse.reasoning,
+        patchedCode,
+        combinedContext,
+        focusMessage,
+        focusLabelValue,
+        pemLogEntry.id,
+        mode,
+        false // isSyntaxError
+      );
+    }
 
     const lineHint = highlightInfo
       ? ` on line ${highlightInfo.line}${highlightInfo.column ? `, column ${highlightInfo.column}` : ''}`
@@ -1016,7 +1045,7 @@ export async function runCodeWithIra(filePath: string, language: string, mode: '
 
 // ---------------------- EXTENSION ACTIVATION ----------------------
 export function activate(context: vscode.ExtensionContext) {
-  const modeEnv = 'baseline'; // 'baseline' or 'full'
+  const modeEnv = 'full'; // 'baseline' or 'full'
   const mode: 'full' | 'baseline' = modeEnv as 'full' | 'baseline';
 
   // Register the "Run with Ira" command

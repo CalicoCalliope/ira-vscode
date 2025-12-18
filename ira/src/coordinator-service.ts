@@ -8,6 +8,7 @@ export interface CoordinatorResponse {
   reasoning?: string;
   answer?: string; // we display this as "Fix" in the webview
   context?: string;
+  code?: string;
 }
 
 function getConfig() {
@@ -70,8 +71,9 @@ function normalize(data: any): CoordinatorResponse {
 
   const answer = toFixText(rawAnswer);
   const context = data?.context ?? root?.context ?? data?.ctx ?? undefined;
+  const code = data?.code ?? root?.code;
 
-  return { isFirstOccurrence: isFirst, hint, reasoning, answer, context };
+  return { isFirstOccurrence: isFirst, hint, reasoning, answer, context, code };
 }
 
 /**
@@ -119,6 +121,7 @@ export async function logPemToCoordinator(entry: any, mode: 'full' | 'baseline' 
     reasoning: undefined,
     answer: undefined,
     context: undefined,
+    code: undefined,
   };
 }
 
