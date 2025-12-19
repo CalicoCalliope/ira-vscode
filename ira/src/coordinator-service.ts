@@ -11,6 +11,13 @@ export interface CoordinatorResponse {
   code?: string;
 }
 
+export interface FileEvent {
+  type: 'file_closed';
+  timestamp: string;
+  username: string;
+  file: string;
+}
+
 function getConfig() {
   const cfg = vscode.workspace.getConfiguration('ira');
   // const rawBase = String(cfg.get('coordinatorEndpoint') || '').trim();
@@ -153,4 +160,30 @@ export async function updateAccessed(pemId: string, accessed: { hint?: boolean; 
   }
 
   console.warn(`All coordinator paths failed for updateAccessed(${pemId}).`);
+}
+
+export async function logFileEventToCoordinator(entry: FileEvent) {
+  const { base, apiKey } = getConfig();
+  const opts = { headers: headers(apiKey), timeout: 10000 };
+
+  const candidates = [
+    '/events'
+  ];
+
+  let lastErr: any = null;
+
+  for (const path of candidates) {
+    try {
+      await axios.post(`${base}${path}`, entry, opts);
+      console.log('[IRA] File event sent to coordinator:', entry);
+      return;
+    } catch (err: any) {
+      lastErr = err;
+      if (err.response?.status === 404) continue; // try next candidate path
+      console.warn(`[IRA] Failed to send file event (${path}):`, err.message);
+      return;
+    }
+  }
+
+  console.warn('[IRA] All coordinator paths failed for logFileEventToCoordinator:', lastErr);
 }

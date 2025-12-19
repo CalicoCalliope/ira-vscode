@@ -4,7 +4,7 @@ import * as path from 'path';
 import * as fs from 'fs';
 import axios from 'axios';
 import { v4 as uuidv4 } from 'uuid';
-import { logPemToCoordinator, updateAccessed } from "./coordinator-service";
+import { logPemToCoordinator, updateAccessed, logFileEventToCoordinator } from "./coordinator-service";
 
 // ---------------------- TYPES ----------------------
 
@@ -27,6 +27,13 @@ export interface PemLogEntry {
     reasoning?: string;
     answer?: string;
   };
+}
+
+export interface FileEvent {
+  type: 'file_closed';
+  timestamp: string;
+  username: string;
+  file: string;
 }
 
 interface WebviewState {
@@ -1171,6 +1178,32 @@ export function activate(context: vscode.ExtensionContext) {
         return;
       }
       clearVisualErrorIndicators();
+    })
+  );
+
+  context.subscriptions.push(
+    vscode.workspace.onDidCloseTextDocument(async (doc) => {
+      const timestamp = new Date().toISOString();
+      const username = process.env.USER || process.env.USERNAME || vscode.env.machineId;
+
+      const fileEvent: FileEvent = {
+        type: 'file_closed',
+        timestamp,
+        username,
+        file: doc.uri.fsPath,
+      };
+
+      console.log('[IRA] File closed:', JSON.stringify({
+        file: doc.uri.fsPath,
+        timestamp,
+        username: process.env.USER || process.env.USERNAME || vscode.env.machineId
+      }, null, 2));
+
+      try {
+        await logFileEventToCoordinator(fileEvent);
+      } catch (err) {
+        console.warn('[IRA] Failed to log file event:', err);
+      }
     })
   );
 }
