@@ -260,7 +260,7 @@ async function sendPemLog(entry: PemLogEntry): Promise<string> {
 }
 
 // ---------------------- WEBVIEW UI ----------------------
-function getHraWebviewHtml(state: WebviewState, mode: 'full' | 'baseline' = 'full') {
+function getHraWebviewHtml(state: WebviewState, mode: 'full' | 'baseline' = 'baseline') {
   const {
     stage,
     isFirstOccurrence,
@@ -916,7 +916,7 @@ function extractPatchedCode(answerStr?: string): string | undefined {
   return undefined;
 }
 
-export async function runCodeWithIra(filePath: string, language: string, mode: 'full' | 'baseline' = 'full') {
+export async function runCodeWithIra(filePath: string, language: string, mode: 'full' | 'baseline' = 'baseline') {
   const editor = vscode.window.activeTextEditor;
   if (!editor){
     return;
@@ -1052,7 +1052,7 @@ export async function runCodeWithIra(filePath: string, language: string, mode: '
 
 // ---------------------- EXTENSION ACTIVATION ----------------------
 export function activate(context: vscode.ExtensionContext) {
-  const modeEnv = 'full'; // 'baseline' or 'full'
+  const modeEnv = 'baseline'; // 'baseline' or 'full'
   const mode: 'full' | 'baseline' = modeEnv as 'full' | 'baseline';
 
   // Register the "Run with Ira" command
