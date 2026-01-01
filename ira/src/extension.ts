@@ -48,6 +48,7 @@ interface WebviewState {
   initialMessage?: string;
   seenHint?: boolean;
   seenReasoning?: boolean;
+  reusedFromHistory?: boolean;
 }
 
 interface TracebackFrame {
@@ -260,7 +261,7 @@ async function sendPemLog(entry: PemLogEntry): Promise<string> {
 }
 
 // ---------------------- WEBVIEW UI ----------------------
-function getHraWebviewHtml(state: WebviewState, mode: 'full' | 'baseline' = 'baseline') {
+function getHraWebviewHtml(state: WebviewState, mode: 'full' | 'baseline' = 'full') {
   const {
     stage,
     isFirstOccurrence,
@@ -272,7 +273,8 @@ function getHraWebviewHtml(state: WebviewState, mode: 'full' | 'baseline' = 'bas
     focusMessage,
     initialMessage,
     seenHint = false,
-    seenReasoning = false
+    seenReasoning = false,
+    reusedFromHistory
   } = state;
 
   const hasSeenHint = seenHint || stage === 'hint';
@@ -312,7 +314,8 @@ function getHraWebviewHtml(state: WebviewState, mode: 'full' | 'baseline' = 'bas
     focusMessage,
     initialMessage,
     seenHint: hasSeenHint,
-    seenReasoning: hasSeenReasoning
+    seenReasoning: hasSeenReasoning,
+    reusedFromHistory
   };
 
   const buildPayload = (nextStage: WebviewState['stage'], overrides: Partial<WebviewState> = {}) => ({
@@ -320,6 +323,8 @@ function getHraWebviewHtml(state: WebviewState, mode: 'full' | 'baseline' = 'bas
     ...overrides,
     stage: nextStage
   });
+
+  console.log("[IRA Extension] reusedFromHistory =", reusedFromHistory);
 
   switch (stage) {
     case 'initial': {
@@ -350,7 +355,8 @@ function getHraWebviewHtml(state: WebviewState, mode: 'full' | 'baseline' = 'bas
       break;
     }
     case 'answer':
-      if (!isFirstOccurrence && mode === 'full') {
+      if (reusedFromHistory && mode === 'full') {
+        console.log("[IRA Extension] Active branch for answer is: reusedFromHistory && mode === 'full'");
         content = `
           <h3>Remember this?</h3>
           <pre class="context">${escapeHtml(answer)}</pre>
@@ -361,6 +367,7 @@ function getHraWebviewHtml(state: WebviewState, mode: 'full' | 'baseline' = 'bas
         `;
       }
       else {
+        console.log("[IRA Extension] Active branch for answer is: else");
         content = `<h3>How to fix it</h3><p>${escapeHtml(answer)}</p>`;
       }
       buttons = `
@@ -490,8 +497,9 @@ export function createHraWebview(
   focusMessage?: string,
   focusLabel?: string,
   pemId?: string,
-  mode: 'full' | 'baseline' = 'baseline',
-  isSyntaxError: boolean = false
+  mode: 'full' | 'baseline' = 'full',
+  isSyntaxError: boolean = false,
+  reusedFromHistory: boolean = false
 ) {
   if (!iraGuidancePanel) {
     iraGuidancePanel = vscode.window.createWebviewPanel(
@@ -518,7 +526,8 @@ export function createHraWebview(
     panel.webview.html = getHraWebviewHtml(
       {
         stage: 'syntax',
-        isFirstOccurrence
+        isFirstOccurrence,
+        reusedFromHistory
       },
       mode
     );
@@ -544,7 +553,8 @@ export function createHraWebview(
     context,
     focusLabel,
     focusMessage,
-    initialMessage
+    initialMessage,
+    reusedFromHistory
   },
   mode);
 
@@ -916,7 +926,7 @@ function extractPatchedCode(answerStr?: string): string | undefined {
   return undefined;
 }
 
-export async function runCodeWithIra(filePath: string, language: string, mode: 'full' | 'baseline' = 'baseline') {
+export async function runCodeWithIra(filePath: string, language: string, mode: 'full' | 'baseline' = 'full') {
   const editor = vscode.window.activeTextEditor;
   if (!editor){
     return;
@@ -963,6 +973,7 @@ export async function runCodeWithIra(filePath: string, language: string, mode: '
         undefined,            // pemId
         mode,
         true,               // isSyntaxError
+        false,               // reusedFromHistory
       );
 
       vscode.window.showErrorMessage(
@@ -1011,7 +1022,7 @@ export async function runCodeWithIra(filePath: string, language: string, mode: '
       : undefined;
     const focusLabelValue = highlightInfo && highlightInfo.isSyntaxError ? '' : undefined;
 
-    if (!coordinatorResponse.isFirstOccurrence && mode === 'full') {
+    if (coordinatorResponse.reusedFromHistory && mode === 'full') {
       createHraWebview(
         'IRA Guidance',
         coordinatorResponse.isFirstOccurrence,
@@ -1023,7 +1034,8 @@ export async function runCodeWithIra(filePath: string, language: string, mode: '
         focusLabelValue,
         pemLogEntry.id,
         mode,
-        false // isSyntaxError
+        false, // isSyntaxError
+        coordinatorResponse.reusedFromHistory
       );
     }
     else {
@@ -1038,7 +1050,8 @@ export async function runCodeWithIra(filePath: string, language: string, mode: '
         focusLabelValue,
         pemLogEntry.id,
         mode,
-        false // isSyntaxError
+        false, // isSyntaxError
+        coordinatorResponse.reusedFromHistory
       );
     }
 
@@ -1052,7 +1065,7 @@ export async function runCodeWithIra(filePath: string, language: string, mode: '
 
 // ---------------------- EXTENSION ACTIVATION ----------------------
 export function activate(context: vscode.ExtensionContext) {
-  const modeEnv = 'baseline'; // 'baseline' or 'full'
+  const modeEnv = 'full'; // 'baseline' or 'full'
   const mode: 'full' | 'baseline' = modeEnv as 'full' | 'baseline';
 
   // Register the "Run with Ira" command

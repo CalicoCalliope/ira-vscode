@@ -9,6 +9,7 @@ export interface CoordinatorResponse {
   answer?: string; // we display this as "Fix" in the webview
   context?: string;
   code?: string;
+  reusedFromHistory?: boolean;
 }
 
 export interface FileEvent {
@@ -80,7 +81,9 @@ function normalize(data: any): CoordinatorResponse {
   const context = data?.context ?? root?.context ?? data?.ctx ?? undefined;
   const code = data?.code ?? root?.code;
 
-  return { isFirstOccurrence: isFirst, hint, reasoning, answer, context, code };
+  const reusedFromHistory = !!data?.reusedFromHistory;
+
+  return { isFirstOccurrence: isFirst, hint, reasoning, answer, context, code, reusedFromHistory };
 }
 
 /**
