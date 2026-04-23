@@ -23,7 +23,7 @@ function getConfig() {
   const cfg = vscode.workspace.getConfiguration('ira');
   // const rawBase = String(cfg.get('coordinatorEndpoint') || '').trim();
   // const base = rawBase.replace(/\/+$/,'');
-  const base = "http://172.23.78.42:80/api/pems";
+  const base = "http://172.23.206.187:80/api/pems";
   const apiKey = String(cfg.get('apiKey') || '').trim();
   if (!base) {
     throw new Error('IRA: coordinator endpoint is not set. Open Settings and set "IRA: Coordinator Endpoint".');
@@ -97,9 +97,9 @@ export async function logPemToCoordinator(entry: any, mode: 'full' | 'baseline' 
   const bodyWithMode = { ...entry, mode };
 
   const candidates = [
-    '/v1/pems',                // preferred JSON API path
-    '/process-pem',            // legacy root path
-    '/pems',                   // very old root path
+    '/process-pem',            // preferred JSON API path
+    '/v1/pems',                
+    '/pems',                   // legacy root path
     '/api/pems/process-pem'    // coordinator behind API prefix
   ];
 
@@ -124,6 +124,7 @@ export async function logPemToCoordinator(entry: any, mode: 'full' | 'baseline' 
     : `IRA coordinator unreachable: ${lastErr?.message || lastErr}`;
 
   vscode.window.showErrorMessage(msg);
+  
   // Return empty tiers so UI still opens without fake content
   return {
     isFirstOccurrence: false,
@@ -144,8 +145,8 @@ export async function updateAccessed(pemId: string, accessed: { hint?: boolean; 
   const opts = { headers: headers(apiKey), timeout: 10000 };
 
   const candidates = [
+    `/accessed/${pemId}`, // preferred path
     `/v1/pems/accessed/${pemId}`,
-    `/accessed/${pemId}`,
     `/pems/accessed/${pemId}`,
     `/api/pems/accessed/${pemId}`,
   ];
